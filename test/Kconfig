@@ -55,4 +55,10 @@ config OMI_ENABLE_HAPTIC
         "Enable the haptic support."
     default n
 
+config OMI_ENABLE_IMU
+    bool "Enable the IMU"
+    help
+        "Enable the IMU support."
+    default n
+
 endmenu

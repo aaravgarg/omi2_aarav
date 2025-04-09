@@ -187,6 +187,19 @@ void set_led_state()
     }
 }
 
+void main_loop_thread(void)
+{
+    while (1)
+    {
+        LOG_INF("Main loop heartbeat");
+        set_led_state(); // Uncomment this if you want status LED to update
+        k_msleep(500);
+    }
+}
+
+/* Start the main loop thread with 1KB stack, priority 7 */
+K_THREAD_DEFINE(main_loop_tid, 1024, main_loop_thread, NULL, NULL, NULL, 7, 0, 0);
+
 /**
  * @brief Main application entry point
  * 
@@ -248,6 +261,13 @@ int main(void)
 	// 	// LOG_INF("Battery initialization skipped");
 	// #endif
 
+	// Initialize IMU if enabled in config
+#ifdef CONFIG_OMI_ENABLE_IMU
+    // Note: The IMU is now initialized via SYS_INIT in imu.c with imu_poweron()
+    // This relies on the IMU driver being properly set up in device tree
+    LOG_PRINTK("IMU initialization configured via system init");
+#endif
+
     // Initialize button if enabled in config
 #ifdef CONFIG_OMI_ENABLE_BUTTON
     err = button_init();
@@ -258,13 +278,6 @@ int main(void)
     }
     LOG_INF("Button initialized");
     activate_button_work(); // Start the button event handling thread
-#endif
-
-//     // Initialize IMU if enabled in config
-#ifdef CONFIG_OMI_ENABLE_IMU
-    // Note: The IMU is now initialized via SYS_INIT in imu.c with imu_poweron()
-    // This relies on the IMU driver being properly set up in device tree
-    LOG_INF("IMU initialization configured via system init");
 #endif
 
     // Initialize SD card and storage if offline storage is enabled
@@ -418,15 +431,24 @@ int main(void)
     set_led_blue(false);
 
     LOG_INF("Entering main loop...");
-	
-    // Main application loop - update LED states every 500ms
-    while (1)
-    {
-        LOG_INF("Main loop heartbeat");
-		set_led_state();
-		k_msleep(500);
-    }
 
+	bool on = false;
+
+    // // Main application loop - update LED states every 500ms
+    // while (1)
+    // {
+
+    //     LOG_INF("Main loop heartbeat1");
+	// 	// set_led_state();
+	// 	k_msleep(500);
+
+	// 	LOG_PRINTK("Main loop heartbeat2");
+	// 	printk("Main loop heartbeat3");
+
+	// 	on = !on;
+    //     set_led_blue(on);
+    
+    // }
 
     // This code is never reached but included for completeness
     return 0;
