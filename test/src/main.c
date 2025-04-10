@@ -380,10 +380,10 @@ int main(void)
 //         return err;
 //     }
 
-//     // Provide haptic feedback for successful codec initialization if enabled
-// #ifdef CONFIG_OMI_ENABLE_HAPTIC
-//     play_haptic_milli(500);
-// #endif
+    // Provide haptic feedback for successful codec initialization if enabled
+#ifdef CONFIG_OMI_ENABLE_HAPTIC
+    play_haptic_milli(500);
+#endif
 //     set_led_blue(false);
 
 //     // Initialize microphone
