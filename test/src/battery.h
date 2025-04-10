@@ -16,8 +16,8 @@
 
 #include <stdint.h>
 
-#ifndef __BATTERY_H__
-#define __BATTERY_H__
+#ifndef BATTERY_H
+#define BATTERY_H
 
 /**
  * @brief Set battery charging to fast charge (100mA).

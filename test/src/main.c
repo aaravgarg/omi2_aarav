@@ -94,7 +94,8 @@ void bt_ctlr_assert_handle(char *name, int type)
 
 /* Global state variables */
 bool is_connected = false;   /* Bluetooth connection state */
-bool is_charging = false;    /* Battery charging state */
+// bool is_charging = false;    /* Battery charging state */
+extern bool is_charging;     /* Battery charging state, defined elsewhere */
 extern bool is_off;          /* Device power state, defined elsewhere */
 extern bool usb_charge;      /* USB charging state, defined elsewhere */
 
@@ -191,7 +192,7 @@ void main_loop_thread(void)
 {
     while (1)
     {
-        LOG_INF("Main loop heartbeat");
+        // LOG_INF("Main loop heartbeat");
         set_led_state(); // Uncomment this if you want status LED to update
         k_msleep(500);
     }
@@ -244,22 +245,23 @@ int main(void)
     /* CONDITIONAL PERIPHERAL INITIALIZATION BASED ON CONFIG */
     
     // Initialize battery if enabled in config
-	// #ifdef CONFIG_OMI_ENABLE_BATTERY
-	// 	err = battery_init();
-	// 	if (err)
-	// 	{
-	// 		LOG_ERR("Battery init failed (err %d)", err);
-	// 		return err;
-	// 	}
+#ifdef CONFIG_OMI_ENABLE_BATTERY
+	LOG_INF("Initializing battery...");
+	err = battery_init();
+	if (err)
+	{
+		LOG_ERR("Battery init failed (err %d)", err);
+		return err;
+	}
 
-	// 	err = battery_charge_start();
-	// 	if (err)
-	// 	{
-	// 		LOG_ERR("Battery failed to start (err %d)", err);
-	// 		return err;
-	// 	}
-	// 	// LOG_INF("Battery initialization skipped");
-	// #endif
+	err = battery_charge_start();
+	if (err)
+	{
+		LOG_ERR("Battery failed to start (err %d)", err);
+		return err;
+	}
+	// LOG_INF("Battery initialization skipped");
+#endif
 
 	// Initialize IMU if enabled in config
 #ifdef CONFIG_OMI_ENABLE_IMU
@@ -322,7 +324,6 @@ int main(void)
 #ifdef CONFIG_OMI_ENABLE_HAPTIC
 	LOG_INF("Providing haptic feedback for successful codec initialization");
     play_haptic_milli(500);
-	LOG_INF("Haptic feedback provided");
 #endif
 
 //     // Initialize USB if enabled in config
@@ -351,28 +352,28 @@ int main(void)
     // Start the Bluetooth transport
     int transportErr;
     transportErr = transport_start();
-//     if (transportErr)
-//     {
-//         LOG_ERR("Failed to start transport (err %d)", transportErr);
-//         // TODO: Detect the current core is app core or net core
-//         // // Blink green LED to indicate error
-//         // for (int i = 0; i < 5; i++)
-//         // {
-//         //     set_led_green(!gpio_pin_get_dt(&led_green));
-//         //     k_msleep(200);
-//         // }
-//         // set_led_green(false);
-//         return transportErr;
-//     }
+    if (transportErr)
+    {
+        LOG_ERR("Failed to start transport (err %d)", transportErr);
+        // TODO: Detect the current core is app core or net core
+        // // Blink green LED to indicate error
+        // for (int i = 0; i < 5; i++)
+        // {
+        //     set_led_green(!gpio_pin_get_dt(&led_green));
+        //     k_msleep(200);
+        // }
+        // set_led_green(false);
+        return transportErr;
+    }
 
-//     // Initialize audio codec (Opus)
-//     LOG_PRINTK("\n");
-//     LOG_INF("Initializing codec...\n");
+    // Initialize audio codec (Opus)
+    LOG_PRINTK("\n");
+    LOG_INF("Initializing codec...\n");
 
-//     set_led_blue(true); // Visual indicator for codec initialization
+    set_led_blue(true); // Visual indicator for codec initialization
 
-//     // Register the callback for encoded audio data
-//     set_codec_callback(codec_handler);
+    // Register the callback for encoded audio data
+    set_codec_callback(codec_handler);
 //     err = codec_start();
 //     if (err)
 //     {
