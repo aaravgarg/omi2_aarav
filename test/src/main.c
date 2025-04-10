@@ -318,6 +318,13 @@ int main(void)
     LOG_INF("Haptic pin initialized");
 #endif
 
+    // Provide haptic feedback for successful codec initialization if enabled
+#ifdef CONFIG_OMI_ENABLE_HAPTIC
+	LOG_INF("Providing haptic feedback for successful codec initialization");
+    play_haptic_milli(500);
+	LOG_INF("Haptic feedback provided");
+#endif
+
 //     // Initialize USB if enabled in config
 // #ifdef CONFIG_ENABLE_USB
 //     LOG_PRINTK("\n");
@@ -333,17 +340,17 @@ int main(void)
 
     /* CRITICAL CORE FUNCTIONALITY INITIALIZATION */
 
-//     // Initialize Bluetooth transport layer
-//     LOG_PRINTK("\n");
-//     LOG_INF("Initializing transport...\n");
+    // Initialize Bluetooth transport layer
+    LOG_PRINTK("\n");
+    LOG_INF("Initializing transport...\n");
 
-//     // Visual indicator for transport initialization
-//     set_led_green(true);
-//     set_led_green(false);
+    // Visual indicator for transport initialization
+    set_led_green(true);
+    set_led_green(false);
 
-//     // Start the Bluetooth transport
-//     int transportErr;
-//     transportErr = transport_start();
+    // Start the Bluetooth transport
+    int transportErr;
+    transportErr = transport_start();
 //     if (transportErr)
 //     {
 //         LOG_ERR("Failed to start transport (err %d)", transportErr);
@@ -380,10 +387,6 @@ int main(void)
 //         return err;
 //     }
 
-    // Provide haptic feedback for successful codec initialization if enabled
-#ifdef CONFIG_OMI_ENABLE_HAPTIC
-    play_haptic_milli(500);
-#endif
 //     set_led_blue(false);
 
 //     // Initialize microphone

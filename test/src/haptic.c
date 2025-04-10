@@ -14,8 +14,8 @@
 
 LOG_MODULE_REGISTER(haptic, CONFIG_LOG_DEFAULT_LEVEL);
 
-/* GPIO pin for haptic control using gpio_dt_spec */
-static const struct gpio_dt_spec haptic_gpio_pin = 
+/* GPIO pin for haptic control using gpio_dt_spec with fallback */
+static const struct gpio_dt_spec motor =
     GPIO_DT_SPEC_GET_OR(DT_NODELABEL(motor_pin), gpios, {0});
 
 /* Maximum haptic duration in milliseconds */
@@ -33,8 +33,12 @@ static struct k_work_delayable haptic_off_work;
  */
 static void haptic_off_work_handler(struct k_work *work)
 {
-    gpio_pin_set_dt(&haptic_gpio_pin, 0);
-    LOG_DBG("Haptic turned off by work handler");
+    if (device_is_ready(motor.port)) {
+        gpio_pin_set_dt(&motor, 0);
+        LOG_DBG("Haptic turned off by work handler");
+    } else {
+        LOG_ERR("Motor device not ready in work handler");
+    }
 }
 
 /**
@@ -50,19 +54,19 @@ int init_haptic_pin(void)
     /* Initialize the work item for turning off the haptic */
     k_work_init_delayable(&haptic_off_work, haptic_off_work_handler);
     
-    if (!device_is_ready(haptic_gpio_pin.port)) {
-        LOG_ERR("Haptic GPIO device not ready");
+    if (!device_is_ready(motor.port)) {
+        LOG_ERR("Motor GPIO device not ready");
         return -ENODEV;
     }
-    
-    /* Configure the haptic pin as output, initially low */
-    int err = gpio_pin_configure_dt(&haptic_gpio_pin, GPIO_OUTPUT_INACTIVE);
+
+    int err = gpio_pin_configure_dt(&motor, GPIO_OUTPUT_INACTIVE);
     if (err) {
-        LOG_ERR("Failed to configure haptic pin: %d", err);
+        LOG_ERR("Failed to configure motor pin: %d", err);
         return err;
     }
-    
-    LOG_INF("Haptic pin initialized");
+
+    LOG_INF("Motor pin initialized");
+    LOG_INF("Motor port: %s", motor.port->name);
     return 0;
 }
 
@@ -77,25 +81,25 @@ int init_haptic_pin(void)
  */
 void play_haptic_milli(uint32_t duration_ms)
 {
-    if (!device_is_ready(haptic_gpio_pin.port)) {
-        LOG_ERR("Haptic device not initialized");
+    LOG_INF("Playing haptic for %u ms", duration_ms);
+    
+    LOG_INF("Checking if haptic GPIO device is ready...");
+    if (!device_is_ready(motor.port)) {
+        LOG_ERR("Motor device not initialized");
         return;
     }
-    
+
     if (duration_ms > MAX_HAPTIC_DURATION) {
         LOG_WRN("Requested duration %u ms exceeds maximum allowed %u ms, limiting duration", 
                 duration_ms, MAX_HAPTIC_DURATION);
         duration_ms = MAX_HAPTIC_DURATION;
     }
-    
-    /* Cancel any pending work to turn off the haptic */
+
     k_work_cancel_delayable(&haptic_off_work);
     
-    /* Activate haptic */
-    gpio_pin_set_dt(&haptic_gpio_pin, 1);
+    gpio_pin_set_dt(&motor, 1);
     
-    /* Schedule the work to turn off the haptic after the duration */
     k_work_schedule(&haptic_off_work, K_MSEC(duration_ms));
-    
+
     LOG_DBG("Haptic activated for %u ms", duration_ms);
-} 
+}
