@@ -191,7 +191,7 @@ void main_loop_thread(void)
 {
     while (1)
     {
-        LOG_INF("Main loop heartbeat");
+        // LOG_INF("Main loop heartbeat");
         set_led_state(); // Uncomment this if you want status LED to update
         k_msleep(500);
     }
@@ -333,36 +333,38 @@ int main(void)
 
     /* CRITICAL CORE FUNCTIONALITY INITIALIZATION */
 
-//     // Initialize Bluetooth transport layer
-//     LOG_PRINTK("\n");
-//     LOG_INF("Initializing transport...\n");
+    // Initialize Bluetooth transport layer
+    LOG_PRINTK("\n");
+    LOG_INF("Initializing transport...\n");
 
-//     // Visual indicator for transport initialization
-//     set_led_green(true);
-//     set_led_green(false);
+    // Visual indicator for transport initialization
+    set_led_green(true);
+    set_led_green(false);
 
-//     // Start the Bluetooth transport
-//     int transportErr;
-//     transportErr = transport_start();
-//     if (transportErr)
-//     {
-//         LOG_ERR("Failed to start transport (err %d)", transportErr);
-//         // TODO: Detect the current core is app core or net core
-//         // // Blink green LED to indicate error
-//         // for (int i = 0; i < 5; i++)
-//         // {
-//         //     set_led_green(!gpio_pin_get_dt(&led_green));
-//         //     k_msleep(200);
-//         // }
-//         // set_led_green(false);
-//         return transportErr;
-//     }
+    // Start the Bluetooth transport
+    int transportErr;
+    transportErr = transport_start();
+    if (transportErr)
+    {
+        LOG_ERR("Failed to start transport (err %d)", transportErr);
+        // TODO: Detect the current core is app core or net core
+        // Blink green LED to indicate error
+        for (int i = 0; i < 5; i++)
+        {
+            set_led_green(!gpio_pin_get_dt(&led_green));
+            k_msleep(200);
+        }
+        set_led_green(false);
+        return transportErr;
+    }
 
-//     // Initialize audio codec (Opus)
-//     LOG_PRINTK("\n");
-//     LOG_INF("Initializing codec...\n");
+	LOG_INF("Transport initialized");
 
-//     set_led_blue(true); // Visual indicator for codec initialization
+    // Initialize audio codec (Opus)
+    LOG_PRINTK("\n");
+    LOG_INF("Initializing codec...\n");
+
+    set_led_blue(true); // Visual indicator for codec initialization
 
 //     // Register the callback for encoded audio data
 //     set_codec_callback(codec_handler);
@@ -380,11 +382,15 @@ int main(void)
 //         return err;
 //     }
 
+// 	LOG_INF("Codec initialized");
+
 //     // Provide haptic feedback for successful codec initialization if enabled
 // #ifdef CONFIG_OMI_ENABLE_HAPTIC
 //     play_haptic_milli(500);
 // #endif
 //     set_led_blue(false);
+
+// 	LOG_INF("Haptic initialized");	
 
 //     // Initialize microphone
 //     LOG_PRINTK("\n");
@@ -412,16 +418,15 @@ int main(void)
 //         return err;
 //     }
 
-    // Turn off initialization indicator LEDs
-    set_led_red(false);
-    set_led_green(false);
+//     // Turn off initialization indicator LEDs
+//     set_led_red(false);
+//     set_led_green(false);
 
     // Indicate successful initialization
     LOG_INF("Device initialized successfully");
 
     // Brief blue LED flash to indicate successful initialization
     LOG_INF("Turning on blue LED");
-	k_msleep(50);
     set_led_blue(true);
 
     LOG_INF("Sleeping 1 second");

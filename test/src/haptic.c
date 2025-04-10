@@ -15,11 +15,11 @@
 LOG_MODULE_REGISTER(haptic, CONFIG_LOG_DEFAULT_LEVEL);
 
 /* GPIO device for haptic control */
-static const struct device *haptic_dev = NULL;
+// static const struct device *haptic_dev = NULL;
 
 /* GPIO pin for haptic control using gpio_dt_spec */
 static const struct gpio_dt_spec haptic_gpio_pin = 
-    GPIO_DT_SPEC_GET_OR(DT_NODELABEL(gpio0), gpios, {0});
+    GPIO_DT_SPEC_GET(DT_NODELABEL(motor_pin), gpios);
 
 /* Maximum haptic duration in milliseconds */
 #define MAX_HAPTIC_DURATION 5000

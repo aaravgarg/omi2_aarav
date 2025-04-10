@@ -1,177 +1,187 @@
-/**
- * @file sdcard.c
- * @brief Implementation of SD card file system operations for audio storage
- *
- * This file implements operations for SD card initialization, mounting,
- * and file handling for audio data storage. It manages a directory structure
- * with audio files and provides file pointer operations for reading and writing.
- */
-#include <ff.h>
+#include <stdlib.h>
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
-#include <zephyr/fs/fs.h>
-#include <zephyr/fs/fs_sys.h>
-#include <zephyr/logging/log.h>
+#include <zephyr/pm/device.h>
 #include <zephyr/storage/disk_access.h>
+#include <zephyr/logging/log.h>
+#include <zephyr/fs/fs.h>
+#include <zephyr/fs/ext2.h>
 #include <zephyr/sys/check.h>
 #include "sdcard.h"
 
 LOG_MODULE_REGISTER(sdcard, CONFIG_LOG_DEFAULT_LEVEL);
 
-/**
- * @brief FAT filesystem instance
- */
-static FATFS fat_fs;
+#define DISK_DRIVE_NAME "SDMMC"
+#define DISK_MOUNT_PT "/ext"
+#define FS_RET_OK 0
 
-/**
- * @brief Mount point configuration structure
- * 
- * Defines filesystem type, associated data structure, and mount options.
- */
+static const struct device *const sdcard = DEVICE_DT_GET(DT_NODELABEL(sdhc0));
+static const struct gpio_dt_spec sd_en = GPIO_DT_SPEC_GET_OR(DT_NODELABEL(sdcard_en_pin), gpios, {0});
+
 static struct fs_mount_t mount_point = {
-	.type = FS_FATFS,
-	.fs_data = &fat_fs,
+	.type = FS_EXT2,
+	.flags = FS_MOUNT_FLAG_NO_FORMAT,
+	.storage_dev = (void *)DISK_DRIVE_NAME,
+	.mnt_point = DISK_MOUNT_PT,
 };
 
-/**
- * @brief GPIO specification for the SD card enable pin (P1.10)
- * 
- * Used to control power to the SD card for power management.
- * The SD card uses the following pins:
- * - SDSCK: P1.07
- * - SDMISO: P1.08
- * - SDMOSI: P1.09
- * - SDEN: P1.10
- * - SDCS: P1.11
- */
-/* This line fetches the GPIO pin configuration from the devicetree:
- * - GPIO_DT_SPEC_GET_OR is a Zephyr macro that gets GPIO info from devicetree
- * - DT_NODELABEL(sdcard_en_pin) references the 'sdcard_en_pin' node defined in the DTS file
- *   which specifies this pin is on GPIO1.10 and active high
- * - gpios references the 'gpios' property in that node
- * - {0} provides a fallback value if the node/property isn't found
- * The resulting gpio_dt_spec struct contains the GPIO controller, pin number, and flags
- */
-static const struct gpio_dt_spec sd_en_gpio_pin = GPIO_DT_SPEC_GET_OR(DT_NODELABEL(sdcard_en_pin), gpios, {0});
-
-/**
- * @brief Current count of audio files
- */
 uint8_t file_count = 0;
 
-/**
- * @brief Maximum length for file paths
- */
-#define MAX_PATH_LENGTH 32
-
-/**
- * @brief Buffer for current file path
- */
+#define MAX_PATH_LENGTH 256
 static char current_full_path[MAX_PATH_LENGTH];
-
-/**
- * @brief Buffer for current read file path
- */
 static char read_buffer[MAX_PATH_LENGTH];
-
-/**
- * @brief Buffer for current write file path
- */
 static char write_buffer[MAX_PATH_LENGTH];
 
-/**
- * @brief Array to store file sizes
- */
 uint32_t file_num_array[2];    
 
-/**
- * @brief SD card mount point path
- */
-static const char *disk_mount_pt = "/SD:/";
+static const char *disk_mount_pt = DISK_MOUNT_PT;
 
-/**
- * @brief Flag indicating whether the SD card is powered on
- */
 bool sd_enabled = false;
+static bool is_mounted = false;
 
-/**
- * @brief Initialize and mount the SD card
- *
- * Configures the SD card enable pin, initializes the SD card controller,
- * mounts the filesystem, and sets up the audio directory structure.
- *
- * @return 0 on success, negative error code on failure
- */
+static int sd_enable_power(bool enable)
+{
+	int ret;
+	// Make sure the GPIO is valid before configuring
+	if (!device_is_ready(sd_en.port)) {
+		LOG_ERR("SD enable GPIO port not ready");
+		return -ENODEV;
+	}
+	
+	ret = gpio_pin_configure_dt(&sd_en, GPIO_OUTPUT);
+	if (ret < 0) {
+		LOG_ERR("Failed to configure SD enable pin: %d", ret);
+		return ret;
+	}
+	
+	if (enable)
+	{
+		LOG_INF("Enabling SD card power");
+		ret = gpio_pin_set_dt(&sd_en, 1);
+		if (ret < 0) {
+			LOG_ERR("Failed to set SD enable pin: %d", ret);
+			return ret;
+		}
+		
+		// Give the SD card time to power up
+		k_msleep(50);
+		
+		ret = pm_device_action_run(sdcard, PM_DEVICE_ACTION_RESUME);
+		sd_enabled = true;
+	} 
+	else
+	{
+		LOG_INF("Disabling SD card power");
+		ret = pm_device_action_run(sdcard, PM_DEVICE_ACTION_SUSPEND);
+		
+		// Wait for device to suspend
+		k_msleep(10);
+		
+		ret = gpio_pin_set_dt(&sd_en, 0);
+		if (ret < 0) {
+			LOG_ERR("Failed to clear SD enable pin: %d", ret);
+			return ret;
+		}
+		
+		sd_enabled = false;
+	}
+	return ret;
+}
+
 int mount_sd_card(void)
 {
-    /* Initialize the SD card enable pin */
-    if (gpio_is_ready_dt(&sd_en_gpio_pin)) 
-    {
-        LOG_INF("SD Enable Pin ready");
-    }
-    else 
-    {
-        LOG_ERR("Error setting up SD Enable Pin");
-        return -1;
+    //initialize the sd card enable pin
+    int ret = sd_enable_power(true);
+    if (ret < 0) {
+        LOG_ERR("Failed to power on SD card (%d)", ret);
+        return ret;
     }
 
-    /* Configure the SD card enable pin and power on the card */
-    int ret = gpio_pin_configure_dt(&sd_en_gpio_pin, GPIO_OUTPUT);
-    if (ret) 
-    {
-        LOG_ERR("Error configuring SD Pin: %d", ret);
-        return -1;
-    }
-    
-    ret = gpio_pin_set_dt(&sd_en_gpio_pin, 1);
-    if (ret) 
-    {
-        LOG_ERR("Error enabling SD power: %d", ret);
-        return -1;
-    }
-    
-    sd_enabled = true;
-    
-    /* Initialize the SD card driver */
-    const char *disk_pdrv = "SD";  
-    int err = disk_access_init(disk_pdrv); 
+    // Give SD card time to power up and stabilize
+    k_msleep(100);
+
+    //initialize the sd card
+    const char *disk_pdrv = DISK_DRIVE_NAME;  
+	int err = disk_access_init(disk_pdrv); 
     LOG_INF("disk_access_init: %d", err);
     if (err) 
     {   
-        /* Reattempt initialization after delay if first attempt fails */
+        // For -22 (EINVAL), check hardware connections
+        if (err == -22) {
+            LOG_ERR("Invalid argument in disk_access_init, check SD card hardware");
+        }
+        
+        //reattempt with longer delay
+        LOG_INF("Retrying SD card initialization...");
         k_msleep(1000);
         err = disk_access_init(disk_pdrv); 
         if (err) 
         {
-            LOG_ERR("disk_access_init failed");
-            sd_off();
+            LOG_ERR("disk_access_init failed with error %d", err);
+            sd_enable_power(false);
             return -1;
         }
     }
 
-    /* Mount the SD card filesystem */
-    mount_point.mnt_point = "/SD:";
-    int res = fs_mount(&mount_point);
-    if (res == FR_OK) 
-    {
-        LOG_INF("SD card mounted successfully");
-    } 
-    else 
-    {
-        LOG_ERR("f_mount failed: %d", res);
+    // Verify disk is present
+    uint32_t sector_count = 0;
+    uint32_t sector_size = 0;
+    err = disk_access_ioctl(disk_pdrv, DISK_IOCTL_GET_SECTOR_COUNT, &sector_count);
+    if (err) {
+        LOG_ERR("Unable to get sector count (err=%d)", err);
+        sd_enable_power(false);
         return -1;
     }
     
-    /* Create the audio directory if it doesn't exist */
-    res = fs_mkdir("/SD:/audio");
+    err = disk_access_ioctl(disk_pdrv, DISK_IOCTL_GET_SECTOR_SIZE, &sector_size);
+    if (err) {
+        LOG_ERR("Unable to get sector size (err=%d)", err);
+        sd_enable_power(false);
+        return -1;
+    }
+    
+    LOG_INF("SD card detected: %u sectors of %u bytes", sector_count, sector_size);
 
-    if (res == FR_OK) 
+    if (is_mounted) {
+        LOG_INF("Disk already mounted");
+        return 0;
+    }
+
+    int res = fs_mount(&mount_point);
+    if (res == FS_RET_OK) 
+    {
+        LOG_INF("SD card mounted successfully");
+        is_mounted = true;
+    } 
+    else 
+    {
+        LOG_INF("File system not found, creating file system...");
+        res = fs_mkfs(FS_EXT2, (uintptr_t)mount_point.storage_dev, NULL, 0);
+        if (res != 0) {
+            LOG_ERR("Error formatting filesystem [%d]", res);
+            sd_enable_power(false);
+            return res;
+        }
+
+        res = fs_mount(&mount_point);
+        if (res != FS_RET_OK) {
+            LOG_ERR("Error mounting disk %d", res);
+            sd_enable_power(false);
+            return res;
+        }
+        is_mounted = true;
+        LOG_INF("SD card mounted successfully after formatting");
+    }
+    
+    res = fs_mkdir(DISK_MOUNT_PT "/audio");
+
+    if (res == 0) 
     {
         LOG_INF("audio directory created successfully");
         initialize_audio_file(1);
     }
-    else if (res == FR_EXIST) 
+    else if (res == -EEXIST) 
     {
         LOG_INF("audio directory already exists");
     }
@@ -180,21 +190,16 @@ int mount_sd_card(void)
         LOG_INF("audio directory creation failed: %d", res);
     }
 
-    /* Open the audio directory and count existing files */
     struct fs_dir_t audio_dir_entry;
     fs_dir_t_init(&audio_dir_entry);
-    err = fs_opendir(&audio_dir_entry, "/SD:/audio");
+    err = fs_opendir(&audio_dir_entry, DISK_MOUNT_PT "/audio");
     if (err) 
     {
         LOG_ERR("error while opening directory %d", err);
         return -1;
     }
     LOG_INF("result of opendir: %d", err);
-    
-    /* Initialize the first audio file */
     initialize_audio_file(1);
-    
-    /* Count files in the directory */
     struct fs_dirent file_count_entry;
     file_count = get_file_contents(&audio_dir_entry, &file_count_entry);
     file_count = 1;
@@ -207,7 +212,6 @@ int mount_sd_card(void)
     fs_closedir(&audio_dir_entry);
     LOG_INF("new num files: %d", file_count);
 
-    /* Set up read and write pointers */
     res = move_write_pointer(file_count); 
     if (res) 
     {
@@ -216,6 +220,7 @@ int mount_sd_card(void)
     }
 
     move_read_pointer(file_count);
+
     if (res) 
     {
         LOG_ERR("error while moving the reader pointer");
@@ -223,10 +228,9 @@ int mount_sd_card(void)
     }
     LOG_INF("file count: %d", file_count);
    
-    /* Check if info file exists, create if not */
-    struct fs_dirent info_file_entry;
-    const char *info_path = "/SD:/info.txt";
-    res = fs_stat(info_path, &info_file_entry);
+    struct fs_dirent info_file_entry; //check if the info file exists. if not, generate new info file
+    const char *info_path = DISK_MOUNT_PT "/info.txt";
+    res = fs_stat(info_path, &info_file_entry); //for later
     if (res) 
     {
         res = create_file("info.txt");
@@ -239,16 +243,10 @@ int mount_sd_card(void)
 	return 0;
 }
 
-/**
- * @brief Get the size of a specific audio file
- *
- * @param num The audio file number to query
- * @return Size of the file in bytes, 0 if error
- */
 uint32_t get_file_size(uint8_t num)
 {
     char *ptr = generate_new_audio_header(num);
-    snprintf(current_full_path, sizeof(current_full_path), "%s%s", disk_mount_pt, ptr);
+    snprintf(current_full_path, sizeof(current_full_path), "%s/%s", disk_mount_pt, ptr);
     k_free(ptr);
     struct fs_dirent entry;
     int res = fs_stat(current_full_path, &entry);
@@ -260,16 +258,10 @@ uint32_t get_file_size(uint8_t num)
     return (uint32_t)entry.size;
 }
 
-/**
- * @brief Set the current read file to the specified audio file
- *
- * @param num The audio file number to set as current read file
- * @return 0 on success, negative error code on failure
- */
 int move_read_pointer(uint8_t num) 
 {
     char *read_ptr = generate_new_audio_header(num);
-    snprintf(read_buffer, sizeof(read_buffer), "%s%s", disk_mount_pt, read_ptr);
+    snprintf(read_buffer, sizeof(read_buffer), "%s/%s", disk_mount_pt, read_ptr);
     k_free(read_ptr);
     struct fs_dirent entry; 
     int res = fs_stat(read_buffer, &entry);
@@ -281,16 +273,10 @@ int move_read_pointer(uint8_t num)
     return 0;
 }
 
-/**
- * @brief Set the current write file to the specified audio file
- *
- * @param num The audio file number to set as current write file
- * @return 0 on success, negative error code on failure
- */
 int move_write_pointer(uint8_t num) 
 {
     char *write_ptr = generate_new_audio_header(num);
-    snprintf(write_buffer, sizeof(write_buffer), "%s%s", disk_mount_pt, write_ptr);
+    snprintf(write_buffer, sizeof(write_buffer), "%s/%s", disk_mount_pt, write_ptr);
     k_free(write_ptr);
     struct fs_dirent entry;
     int res = fs_stat(write_buffer, &entry);
@@ -302,16 +288,10 @@ int move_write_pointer(uint8_t num)
     return 0;   
 }
 
-/**
- * @brief Create a new file at the specified path
- *
- * @param file_path The path of the file to create (relative to mount point)
- * @return 0 on success, negative error code on failure
- */
 int create_file(const char *file_path)
 {
     int ret = 0;
-    snprintf(current_full_path, sizeof(current_full_path), "%s%s", disk_mount_pt, file_path);
+    snprintf(current_full_path, sizeof(current_full_path), "%s/%s", disk_mount_pt, file_path);
 	struct fs_file_t data_file;
 	fs_file_t_init(&data_file);
 	ret = fs_open(&data_file, current_full_path, FS_O_WRITE | FS_O_CREATE);
@@ -324,14 +304,6 @@ int create_file(const char *file_path)
     return 0;
 }
 
-/**
- * @brief Read data from the current read file
- *
- * @param buf Buffer to store the read data
- * @param amount Number of bytes to read
- * @param offset Position in the file to read from
- * @return Number of bytes read or negative error code
- */
 int read_audio_data(uint8_t *buf, int amount, int offset) 
 {
     struct fs_file_t read_file;
@@ -346,13 +318,6 @@ int read_audio_data(uint8_t *buf, int amount, int offset)
     return rc;
 }
 
-/**
- * @brief Write data to the current write file
- *
- * @param data Pointer to data buffer to write
- * @param length Number of bytes to write
- * @return 0 on success, negative error code on failure
- */
 int write_to_file(uint8_t *data, uint32_t length)
 {
     struct fs_file_t write_file;
@@ -364,12 +329,6 @@ int write_to_file(uint8_t *data, uint32_t length)
     return 0;
 }
     
-/**
- * @brief Initialize an audio file with the specified number
- *
- * @param num The audio file number to initialize
- * @return 0 on success, negative error code on failure
- */
 int initialize_audio_file(uint8_t num) 
 {
     char *header = generate_new_audio_header(num);
@@ -377,17 +336,11 @@ int initialize_audio_file(uint8_t num)
     {
         return -1;
     }
-    create_file(header);
+    int res = create_file(header);
     k_free(header);
-    return 0;
+    return res;
 }
 
-/**
- * @brief Generate a filename for an audio file with the specified number
- *
- * @param num The audio file number (1-99)
- * @return Pointer to allocated string with filename, NULL if invalid number
- */
 char* generate_new_audio_header(uint8_t num) 
 {
     if (num > 99) return NULL;
@@ -410,30 +363,23 @@ char* generate_new_audio_header(uint8_t num)
     return ptr_;
 }
 
-/**
- * @brief Count and collect information about files in a directory
- *
- * @param zdp Directory handle
- * @param entry Dirent structure to populate
- * @return Number of files found or negative error code
- */
 int get_file_contents(struct fs_dir_t *zdp, struct fs_dirent *entry) 
 {
-    if (zdp->mp->fs->readdir(zdp, entry)) 
-    {
-        return -1;
-    }
-    if (entry->name[0] == 0) 
-    {
-        return 0;
-    }
-    int count = 0;  
-    file_num_array[count] = entry->size;
-    LOG_INF("file numarray %d %d", count, file_num_array[count]);
-    LOG_INF("file name is %s", entry->name);
-    count++;
-    while (zdp->mp->fs->readdir(zdp, entry) == 0) 
-    {
+   if (fs_readdir(zdp, entry)) 
+   {
+    return -1;
+   }
+   if (entry->name[0] == 0) 
+   {
+    return 0;
+   }
+   int count = 0;  
+   file_num_array[count] = entry->size;
+   LOG_INF("file numarray %d %d", count, file_num_array[count]);
+   LOG_INF("file name is %s", entry->name);
+   count++;
+   while (fs_readdir(zdp, entry) == 0) 
+   {
         if (entry->name[0] == 0)
         {
             break;
@@ -442,20 +388,14 @@ int get_file_contents(struct fs_dir_t *zdp, struct fs_dirent *entry)
         LOG_INF("file numarray %d %d", count, file_num_array[count]);
         LOG_INF("file name is %s", entry->name);
         count++;
-    }
-    return count;
+   }
+   return count;
 }
 
-/**
- * @brief Clear an audio file (delete and recreate empty)
- *
- * @param num The audio file number to clear
- * @return 0 on success, negative error code on failure
- */
 int clear_audio_file(uint8_t num) 
 {
     char *clear_header = generate_new_audio_header(num);
-    snprintf(current_full_path, sizeof(current_full_path), "%s%s", disk_mount_pt, clear_header);
+    snprintf(current_full_path, sizeof(current_full_path), "%s/%s", disk_mount_pt, clear_header);
     k_free(clear_header);
     int res = fs_unlink(current_full_path);
     if (res) 
@@ -477,32 +417,21 @@ int clear_audio_file(uint8_t num)
     return 0;
 }
 
-/**
- * @brief Delete an audio file
- *
- * @param num The audio file number to delete
- * @return 0 on success, negative error code on failure
- */
 int delete_audio_file(uint8_t num) 
 {
     char *ptr = generate_new_audio_header(num);
-    snprintf(current_full_path, sizeof(current_full_path), "%s%s", disk_mount_pt, ptr);
+    snprintf(current_full_path, sizeof(current_full_path), "%s/%s", disk_mount_pt, ptr);
     k_free(ptr);
     int res = fs_unlink(current_full_path);
     if (res) 
     {
-        LOG_PRINTK("error deleting file in delete");
+        LOG_ERR("error deleting file in delete");
         return -1;
     }
 
     return 0;
 }
 
-/**
- * @brief Clear the entire audio directory and reset to initial state
- *
- * @return 0 on success, negative error code on failure
- */
 int clear_audio_directory() 
 {
     if (file_count == 1) 
@@ -517,17 +446,17 @@ int clear_audio_directory()
         k_msleep(10);
         if (res) 
         {
-            LOG_PRINTK("error on %d", i);
+            LOG_ERR("error on %d", i);
             return -1;
         }  
     }
-    res = fs_unlink("/SD:/audio");
+    res = fs_unlink(DISK_MOUNT_PT "/audio");
     if (res) 
     {
         LOG_ERR("error deleting file");
         return -1;
     }
-    res = fs_mkdir("/SD:/audio");
+    res = fs_mkdir(DISK_MOUNT_PT "/audio");
     if (res) 
     {
         LOG_ERR("failed to make directory");
@@ -539,31 +468,25 @@ int clear_audio_directory()
         LOG_ERR("failed to make new file in directory files");
         return -1;
     }
-    LOG_ERR("done with clearing");
+    LOG_INF("done with clearing");
 
     file_count = 1;  
     move_write_pointer(1);
     return 0;
 }
 
-/**
- * @brief Save a file offset value to info.txt
- *
- * @param offset The offset value to save
- * @return 0 on success, negative error code on failure
- */
 int save_offset(uint32_t offset)
 {
     uint8_t buf[4] = {
-        offset & 0xFF,
-        (offset >> 8) & 0xFF,
-        (offset >> 16) & 0xFF, 
-        (offset >> 24) & 0xFF 
+	offset & 0xFF,
+	(offset >> 8) & 0xFF,
+	(offset >> 16) & 0xFF, 
+	(offset >> 24) & 0xFF 
     };
 
     struct fs_file_t write_file;
     fs_file_t_init(&write_file);
-    int res = fs_open(&write_file, "/SD:/info.txt", FS_O_WRITE | FS_O_CREATE);
+    int res = fs_open(&write_file, DISK_MOUNT_PT "/info.txt", FS_O_WRITE | FS_O_CREATE);
     if (res) 
     {
         LOG_ERR("error opening file %d", res);
@@ -579,17 +502,12 @@ int save_offset(uint32_t offset)
     return 0;
 }
 
-/**
- * @brief Get the saved offset value from info.txt
- *
- * @return The saved offset value or negative error code
- */
 int get_offset()
 {
     uint8_t buf[4];
     struct fs_file_t read_file;
     fs_file_t_init(&read_file);
-    int rc = fs_open(&read_file, "/SD:/info.txt", FS_O_READ | FS_O_RDWR);
+    int rc = fs_open(&read_file, DISK_MOUNT_PT "/info.txt", FS_O_READ | FS_O_RDWR);
     if (rc < 0)
     {
         LOG_ERR("error opening file %d", rc);
@@ -613,36 +531,19 @@ int get_offset()
     return offset_ptr[0];
 }
 
-/**
- * @brief Power off the SD card
- */
 void sd_off()
 {
-    /* Power off the SD card to save energy */
-    if (sd_enabled) {
-        gpio_pin_set_dt(&sd_en_gpio_pin, 0);
-        sd_enabled = false;
-    }
+    sd_enable_power(false);
 }
 
-/**
- * @brief Power on the SD card
- */
 void sd_on()
 {
-    /* Power on the SD card for I/O operations */
-    if (!sd_enabled) {
-        gpio_pin_set_dt(&sd_en_gpio_pin, 1);
-        sd_enabled = true;
-    }
+    sd_enable_power(true);
 }
 
-/**
- * @brief Check if the SD card is powered on
- *
- * @return true if SD card is powered on, false otherwise
- */
 bool is_sd_on()
 {
     return sd_enabled;
 }
+
+

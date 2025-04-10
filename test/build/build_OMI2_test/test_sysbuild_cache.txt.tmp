@@ -25,7 +25,6 @@ ipc_radio_EXTRA_CONF_FILE:STRING=;/opt/nordic/ncs/v2.9.1/nrf/applications/ipc_ra
 sysbuild_toplevel_BINARY_DIR:STATIC=/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test
 sysbuild_toplevel_IS_TOP_LEVEL:STATIC=ON
 sysbuild_toplevel_SOURCE_DIR:STATIC=/opt/nordic/ncs/v2.9.1/zephyr/share/sysbuild
-test_NCS_RUNNER_HEX:INTERNAL=/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test/merged.hex
 BOARD:STRING=omi_nrf5340/nrf5340/cpuapp
 SYSBUILD_NAME:STRING=test
 SYSBUILD_MAIN_APP:BOOL=True

@@ -108,23 +108,11 @@ WEST_PYTHON:UNINITIALIZED=/opt/nordic/ncs/toolchains/b8efef2ad5/opt/python@3.12/
 //Zephyr base
 ZEPHYR_BASE:PATH=/opt/nordic/ncs/v2.9.1/zephyr
 
-//Path to merged image in Intel Hex format
-ZEPHYR_RUNNER_CONFIG_KERNEL_HEX:STRING=
-
 //The directory containing a CMake configuration file for Zephyr.
 Zephyr_DIR:PATH=/opt/nordic/ncs/v2.9.1/zephyr/share/zephyr-package/cmake
 
 //Extra config fragments for ipc_radio image
 ipc_radio_EXTRA_CONF_FILE:STRING=;/opt/nordic/ncs/v2.9.1/nrf/applications/ipc_radio/overlay-bt_hci_ipc.conf
-
-//Value Computed by CMake
-sysbuild_BINARY_DIR:STATIC=/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test/_sysbuild
-
-//Value Computed by CMake
-sysbuild_IS_TOP_LEVEL:STATIC=OFF
-
-//Value Computed by CMake
-sysbuild_SOURCE_DIR:STATIC=/opt/nordic/ncs/v2.9.1/zephyr/share/sysbuild/template
 
 //Value Computed by CMake
 sysbuild_toplevel_BINARY_DIR:STATIC=/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test
@@ -200,8 +188,4 @@ _Python3_EXECUTABLE:INTERNAL=/opt/nordic/ncs/toolchains/b8efef2ad5/opt/python@3.
 //Python3 Properties
 _Python3_INTERPRETER_PROPERTIES:INTERNAL=Python;3;12;4;64;;cpython-312-darwin;/opt/nordic/ncs/toolchains/b8efef2ad5/opt/python@3.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12;/opt/nordic/ncs/toolchains/b8efef2ad5/lib/python3.12;/opt/nordic/ncs/toolchains/b8efef2ad5/opt/python@3.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages;/opt/nordic/ncs/toolchains/b8efef2ad5/lib/python3.12/site-packages
 _Python3_INTERPRETER_SIGNATURE:INTERNAL=dd116d4847e5efd00590276778fdf0af
-//nRF Connect SDK partition managere controlled hex file
-ipc_radio_NCS_RUNNER_HEX:INTERNAL=/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test/merged_CPUNET.hex
-//nRF Connect SDK partition managere controlled hex file
-test_NCS_RUNNER_HEX:INTERNAL=/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test/merged.hex
 

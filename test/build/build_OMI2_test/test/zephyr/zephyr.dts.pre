@@ -1040,6 +1040,11 @@ ipc0: ipc0 {
   status = "okay";
  };
 
+ bt_hci_ipc0: bt-hci-ipc {
+  compatible = "zephyr,bt-hci-ipc";
+  status = "okay";
+ };
+
  chosen {
   zephyr,sram = &sram0_image;
   zephyr,flash = &flash0;
@@ -1057,6 +1062,10 @@ ipc0: ipc0 {
   dmic0 = &pdm0;
   buttons = &buttons;
  };
+};
+
+&ipc0 {
+    status = "okay";
 };
 
 &gpio0 {
@@ -1097,7 +1106,7 @@ ipc0: ipc0 {
  pinctrl-0 = <&pdm0_default>;
  pinctrl-names = "default";
  clock-source = "PCLK32M_HFXO";
-# 162 "/Users/aaravgarg/Coding/omi2_aarav/boards/omi_nrf5340/omi_nrf5340/omi_nrf5340_nrf5340_cpuapp.dts"
+# 171 "/Users/aaravgarg/Coding/omi2_aarav/boards/omi_nrf5340/omi_nrf5340/omi_nrf5340_nrf5340_cpuapp.dts"
 };
 
 &i2c2 {
@@ -1182,7 +1191,7 @@ wifi-max-tx-pwr-2g-mcs7 = <16>;
 wlan0: wlan {
  compatible = "nordic,wlan";
 };
-# 228 "/Users/aaravgarg/Coding/omi2_aarav/boards/omi_nrf5340/omi_nrf5340/omi_nrf5340_nrf5340_cpuapp.dts" 2
+# 237 "/Users/aaravgarg/Coding/omi2_aarav/boards/omi_nrf5340/omi_nrf5340/omi_nrf5340_nrf5340_cpuapp.dts" 2
 # 1 "/Users/aaravgarg/Coding/omi2_aarav/boards/omi_nrf5340/omi_nrf5340/nrf70_common_5g.dtsi" 1
 
 
@@ -1196,7 +1205,7 @@ wifi-max-tx-pwr-5g-mid-mcs0 = <11>;
 wifi-max-tx-pwr-5g-mid-mcs7 = <11>;
 wifi-max-tx-pwr-5g-high-mcs0 = <13>;
 wifi-max-tx-pwr-5g-high-mcs7 = <13>;
-# 229 "/Users/aaravgarg/Coding/omi2_aarav/boards/omi_nrf5340/omi_nrf5340/omi_nrf5340_nrf5340_cpuapp.dts" 2
+# 238 "/Users/aaravgarg/Coding/omi2_aarav/boards/omi_nrf5340/omi_nrf5340/omi_nrf5340_nrf5340_cpuapp.dts" 2
  };
 };
 # 1 "/Users/aaravgarg/Coding/omi2_aarav/boards/omi_nrf5340/omi_nrf5340/omi_nrf5340-cpuapp_partitioning.dtsi" 1
@@ -1268,7 +1277,7 @@ wifi-max-tx-pwr-5g-high-mcs7 = <13>;
   };
  };
 };
-# 232 "/Users/aaravgarg/Coding/omi2_aarav/boards/omi_nrf5340/omi_nrf5340/omi_nrf5340_nrf5340_cpuapp.dts" 2
+# 241 "/Users/aaravgarg/Coding/omi2_aarav/boards/omi_nrf5340/omi_nrf5340/omi_nrf5340_nrf5340_cpuapp.dts" 2
 # 1 "/Users/aaravgarg/Coding/omi2_aarav/boards/omi_nrf5340/omi_nrf5340/omi_nrf5340-shared_sram.dtsi" 1
 
 
@@ -1294,6 +1303,6 @@ wifi-max-tx-pwr-5g-high-mcs7 = <13>;
   };
  };
 };
-# 233 "/Users/aaravgarg/Coding/omi2_aarav/boards/omi_nrf5340/omi_nrf5340/omi_nrf5340_nrf5340_cpuapp.dts" 2
+# 242 "/Users/aaravgarg/Coding/omi2_aarav/boards/omi_nrf5340/omi_nrf5340/omi_nrf5340_nrf5340_cpuapp.dts" 2
 # 0 "<command-line>" 2
 # 1 "/opt/nordic/ncs/v2.9.1/zephyr/misc/empty_file.c"

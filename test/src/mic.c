@@ -18,7 +18,7 @@ LOG_MODULE_REGISTER(mic, CONFIG_LOG_DEFAULT_LEVEL);
 #define SAMPLE_BITS 16             /* 16-bit samples */
 #define TIMEOUT_MS 1000            /* Read timeout in milliseconds */
 #define BLOCK_SIZE 1600  /* Use the existing buffer size definition */
-#define BLOCK_COUNT 2              /* Number of memory blocks for buffering (double-buffer) */
+#define BLOCK_COUNT 4              /* Number of memory blocks for buffering (double-buffer) */
 
 /* Memory allocation for audio buffers */
 K_MEM_SLAB_DEFINE_STATIC(mem_slab, BLOCK_SIZE * sizeof(int16_t), BLOCK_COUNT, 4);
@@ -176,6 +176,7 @@ int mic_start()
 
     /* Power on the microphone */
     mic_on();
+	k_msleep(50);
     
     /* Set up the channel mapping configuration */
     cfg.channel.req_chan_map_lo = dmic_build_channel_map(0, 0, PDM_CHAN_LEFT) | 

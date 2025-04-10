@@ -1231,17 +1231,17 @@ int transport_start()
         LOG_INF("Advertising successfully started");
     }
 
-    int battErr = 0;
-    battErr |= battery_init();
-    battErr |= battery_charge_start();
-    if (battErr)
-    {
-        LOG_ERR("Battery init failed (err %d)", battErr);
-    }
-    else
-    {
-        LOG_INF("Battery initialized");
-    }
+    // int battErr = 0;
+    // battErr |= battery_init();
+    // battErr |= battery_charge_start();
+    // if (battErr)
+    // {
+    //     LOG_ERR("Battery init failed (err %d)", battErr);
+    // }
+    // else
+    // {
+    //     LOG_INF("Battery initialized");
+    // }
 
     // friend_init();
 

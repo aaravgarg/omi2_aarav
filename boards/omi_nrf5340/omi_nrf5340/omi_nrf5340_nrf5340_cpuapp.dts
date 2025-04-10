@@ -91,6 +91,11 @@
 		gpios = <&gpio1 10 GPIO_ACTIVE_HIGH>;
 		status = "okay";
 	};
+
+	bt_hci_ipc0: bt-hci-ipc {
+		compatible = "zephyr,bt-hci-ipc";
+		status = "okay";
+	};
 	
 	chosen {
 		zephyr,sram = &sram0_image;
@@ -109,6 +114,10 @@
 		dmic0 = &pdm0;
 		buttons = &buttons;
 	};
+};
+
+&ipc0 {
+    status = "okay";
 };
 
 &gpio0 {
