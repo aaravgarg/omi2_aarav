@@ -374,32 +374,32 @@ int main(void)
 
     // Register the callback for encoded audio data
     set_codec_callback(codec_handler);
-//     err = codec_start();
-//     if (err)
-//     {
-//         LOG_ERR("Failed to start codec: %d", err);
-//         // Blink blue LED to indicate codec error
-//         for (int i = 0; i < 5; i++)
-//         {
-//             set_led_blue(!gpio_pin_get_dt(&led_blue));
-//             k_msleep(200);
-//         }
-//         set_led_blue(false);
-//         return err;
-//     }
+    err = codec_start();
+    if (err)
+    {
+        LOG_ERR("Failed to start codec: %d", err);
+        // Blink blue LED to indicate codec error
+        for (int i = 0; i < 5; i++)
+        {
+            set_led_blue(!gpio_pin_get_dt(&led_blue));
+            k_msleep(200);
+        }
+        set_led_blue(false);
+        return err;
+    }
 
-//     set_led_blue(false);
+    set_led_blue(false);
 
-//     // Initialize microphone
-//     LOG_PRINTK("\n");
-//     LOG_INF("Initializing microphone...\n");
+    // Initialize microphone
+    LOG_PRINTK("\n");
+    LOG_INF("Initializing microphone...\n");
 
-//     // Visual indicator for microphone initialization
-//     set_led_red(true);
-//     set_led_green(true);
+    // Visual indicator for microphone initialization
+    set_led_red(true);
+    set_led_green(true);
 
-//     // Register the callback for microphone data
-//     set_mic_callback(mic_handler);
+    // Register the callback for microphone data
+    set_mic_callback(mic_handler);
 //     err = mic_start();
 //     if (err)
 //     {
