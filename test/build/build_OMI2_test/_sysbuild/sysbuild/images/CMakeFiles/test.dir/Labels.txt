@@ -1,0 +1,13 @@
+# Target labels
+ test
+# Source files and their labels
+/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test/_sysbuild/sysbuild/images/CMakeFiles/test
+/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test/_sysbuild/sysbuild/images/CMakeFiles/test.rule
+/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test/_sysbuild/sysbuild/images/CMakeFiles/test-complete.rule
+/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test/_sysbuild/sysbuild/images/test-prefix/src/test-stamp/test-build.rule
+/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test/_sysbuild/sysbuild/images/test-prefix/src/test-stamp/test-configure.rule
+/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test/_sysbuild/sysbuild/images/test-prefix/src/test-stamp/test-download.rule
+/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test/_sysbuild/sysbuild/images/test-prefix/src/test-stamp/test-install.rule
+/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test/_sysbuild/sysbuild/images/test-prefix/src/test-stamp/test-mkdir.rule
+/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test/_sysbuild/sysbuild/images/test-prefix/src/test-stamp/test-patch.rule
+/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test/_sysbuild/sysbuild/images/test-prefix/src/test-stamp/test-update.rule

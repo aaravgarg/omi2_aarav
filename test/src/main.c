@@ -72,7 +72,9 @@ static void codec_handler(uint8_t *data, size_t len)
  */
 static void mic_handler(int16_t *buffer)
 {
-    int err = codec_receive_pcm(buffer, MIC_BUFFER_SAMPLES);
+    LOG_INF("mic_handler: got PCM buffer, passing to codec...");
+    LOG_HEXDUMP_INF(buffer, 32, "PCM sample:");
+    int err = codec_receive_pcm(buffer, CODEC_PACKAGE_SAMPLES);
     if (err)
     {
         LOG_ERR("Failed to process PCM data: %d", err);
@@ -188,18 +190,18 @@ void set_led_state()
     }
 }
 
-void main_loop_thread(void)
-{
-    while (1)
-    {
-        // LOG_INF("Main loop heartbeat");
-        set_led_state(); // Uncomment this if you want status LED to update
-        k_msleep(500);
-    }
-}
+// void main_loop_thread(void)
+// {
+//     while (1)
+//     {
+//         // LOG_INF("Main loop heartbeat");
+//         set_led_state(); // Uncomment this if you want status LED to update
+//         k_msleep(500);
+//     }
+// }
 
-/* Start the main loop thread with 1KB stack, priority 7 */
-K_THREAD_DEFINE(main_loop_tid, 1024, main_loop_thread, NULL, NULL, NULL, 7, 0, 0);
+// /* Start the main loop thread with 1KB stack, priority 7 */
+// K_THREAD_DEFINE(main_loop_tid, 1024, main_loop_thread, NULL, NULL, NULL, 7, 0, 0);
 
 /**
  * @brief Main application entry point
@@ -322,7 +324,6 @@ int main(void)
 
     // Provide haptic feedback for successful codec initialization if enabled
 #ifdef CONFIG_OMI_ENABLE_HAPTIC
-	LOG_INF("Providing haptic feedback for successful codec initialization");
     play_haptic_milli(500);
 #endif
 
@@ -400,21 +401,21 @@ int main(void)
 
     // Register the callback for microphone data
     set_mic_callback(mic_handler);
-//     err = mic_start();
-//     if (err)
-//     {
-//         LOG_ERR("Failed to start microphone: %d", err);
-//         // Blink red and green LEDs to indicate microphone error
-//         for (int i = 0; i < 5; i++)
-//         {
-//             set_led_red(!gpio_pin_get_dt(&led_red));
-//             set_led_green(!gpio_pin_get_dt(&led_green));
-//             k_msleep(200);
-//         }
-//         set_led_red(false);
-//         set_led_green(false);
-//         return err;
-//     }
+    err = mic_start();
+    if (err)
+    {
+        LOG_ERR("Failed to start microphone: %d", err);
+        // Blink red and green LEDs to indicate microphone error
+        for (int i = 0; i < 5; i++)
+        {
+            set_led_red(!gpio_pin_get_dt(&led_red));
+            set_led_green(!gpio_pin_get_dt(&led_green));
+            k_msleep(200);
+        }
+        set_led_red(false);
+        set_led_green(false);
+        return err;
+    }
 
     // Turn off initialization indicator LEDs
     set_led_red(false);
@@ -424,35 +425,21 @@ int main(void)
     LOG_INF("Device initialized successfully");
 
     // Brief blue LED flash to indicate successful initialization
-    LOG_INF("Turning on blue LED");
-	k_msleep(50);
     set_led_blue(true);
 
-    LOG_INF("Sleeping 1 second");
-    k_msleep(1000);
+    k_msleep(500);
 
-    LOG_INF("Turning off blue LED");
     set_led_blue(false);
 
     LOG_INF("Entering main loop...");
 
-	bool on = false;
-
-    // // Main application loop - update LED states every 500ms
-    // while (1)
-    // {
-
-    //     LOG_INF("Main loop heartbeat1");
-	// 	// set_led_state();
-	// 	k_msleep(500);
-
-	// 	LOG_PRINTK("Main loop heartbeat2");
-	// 	printk("Main loop heartbeat3");
-
-	// 	on = !on;
-    //     set_led_blue(on);
-    
-    // }
+    // Main application loop - update LED states every 500ms
+    while (1)
+    {
+        // LOG_INF("Main loop heartbeat inside the actual main() function!");
+		set_led_state();
+		k_msleep(500);
+    }
 
     // This code is never reached but included for completeness
     return 0;

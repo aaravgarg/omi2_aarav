@@ -2,7 +2,7 @@
 
 // #define SAMPLE_RATE 16000
 #define MIC_GAIN 64
-#define MIC_IRC_PRIORITY 7
+#define MIC_IRC_PRIORITY 4
 #define MIC_BUFFER_SAMPLES 1600    // 100ms
 #define AUDIO_BUFFER_SAMPLES 16000 // 1s
 #define NETWORK_RING_BUF_SIZE 32   // number of frames * CODEC_OUTPUT_MAX_BYTES
@@ -13,6 +13,14 @@
 // #define PDM_DIN_PIN NRF_GPIO_PIN_MAP(0, 16)
 // #define PDM_CLK_PIN NRF_GPIO_PIN_MAP(1, 0)
 // #define PDM_PWR_PIN NRF_GPIO_PIN_MAP(1, 10)
+
+// New PDM pin mappings (P1.xx = Port 1)
+#define PDM_DIN_PIN NRF_GPIO_PIN_MAP(1, 0)   // P1.00 - PDM_DATA
+#define PDM_CLK_PIN NRF_GPIO_PIN_MAP(1, 1)   // P1.01 - PDM_CLK
+#define PDM_WAKE_PIN NRF_GPIO_PIN_MAP(1, 2)  // Optional for future use
+#define PDM_EN_PIN NRF_GPIO_PIN_MAP(1, 4)    // Optional for future use
+#define PDM_THSEL_PIN NRF_GPIO_PIN_MAP(1, 5) // Optional for future use
+#define PDM_PWR_PIN NRF_GPIO_PIN_MAP(1, 4)   // Currently using EN as PWR pin
 
 // Codecs
 #ifdef CONFIG_OMI_CODEC_OPUS
