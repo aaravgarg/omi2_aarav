@@ -18,7 +18,7 @@ LOG_MODULE_REGISTER(mic, CONFIG_LOG_DEFAULT_LEVEL);
 #define DMIC_TIMEOUT_MS 1000
 #define DMIC_BLOCK_SIZE_BYTES (MIC_BUFFER_SAMPLES * BYTES_PER_SAMPLE)
 // Need enough blocks for double buffering at least
-#define DMIC_MEM_SLAB_BLOCK_COUNT 4
+#define DMIC_MEM_SLAB_BLOCK_COUNT 8
 
 // --- Device and GPIO ---
 static const struct device *const dmic_dev = DEVICE_DT_GET(DT_ALIAS(dmic0));
@@ -123,8 +123,19 @@ static void dmic_reader_thread(void *p1, void *p2, void *p3)
 
     while (atomic_get(&mic_active))
     {
+        // Start capturing - restart DMIC for each block
+        ret = dmic_trigger(dmic_dev, DMIC_TRIGGER_START);
+        if (ret < 0) {
+            LOG_ERR("Failed to start DMIC trigger: %d", ret);
+            k_sleep(K_MSEC(5));
+            continue;
+        }
+
         // Blocking read for the next buffer
         ret = dmic_read(dmic_dev, 0, &buffer, &buffer_size, DMIC_TIMEOUT_MS);
+        
+        // Stop capture after each read attempt
+        dmic_trigger(dmic_dev, DMIC_TRIGGER_STOP);
 
         if (ret == 0)
         {
@@ -133,33 +144,47 @@ static void dmic_reader_thread(void *p1, void *p2, void *p3)
                  // Still process if callback exists, maybe partial buffer?
             }
 
-            // NEW: Directly call codec_receive_pcm
-            int codec_ret = codec_receive_pcm((int16_t *)buffer, buffer_size / BYTES_PER_SAMPLE);
-            // Retry mechanism for backpressure
-            while (codec_ret != 0) {
-                LOG_ERR("Failed to write PCM data to codec ring buffer: %d. Retrying...", codec_ret);
-                k_sleep(K_MSEC(5)); // Wait for codec to consume data
-                codec_ret = codec_receive_pcm((int16_t *)buffer, buffer_size / BYTES_PER_SAMPLE);
-                // TODO: Add a max retry count?
+            int16_t *samples = (int16_t *)buffer;
+            size_t total_samples = buffer_size / BYTES_PER_SAMPLE;
+
+            for (size_t i = 0; i < total_samples; i += CODEC_PACKAGE_SAMPLES) {
+                size_t chunk_samples = CODEC_PACKAGE_SAMPLES;
+                if (i + CODEC_PACKAGE_SAMPLES > total_samples)
+                    chunk_samples = total_samples - i;
+
+                int ret = codec_receive_pcm(&samples[i], chunk_samples);
+                int retry = 0;
+                while (ret != 0 && retry++ < 5) {
+                    LOG_WRN("Retrying chunk write to codec (%d/%d)...", retry, 5);
+                    k_sleep(K_MSEC(2));
+                    ret = codec_receive_pcm(&samples[i], chunk_samples);
+                }
+
+                if (ret != 0) {
+                    LOG_ERR("Dropping audio chunk after retries");
+                    break;
+                }
             }
-            // END NEW
-            // Free the buffer back to the slab *after* successful write
+
+            // Free the buffer back to the slab after all chunks
             k_mem_slab_free(&dmic_mem_slab, buffer);
             buffer = NULL;
         }
-        else if (ret == -ETIMEDOUT)
-        {
-            LOG_WRN("DMIC read timed out");
-            // Optional: Try to stop/start trigger?
+        else if (ret == -EAGAIN) {  // -11: temporary condition, no data available
+            LOG_WRN("DMIC read returned -EAGAIN (no data available); retrying...");
+            k_sleep(K_MSEC(5));  // Short delay before retrying
+            continue;
         }
-        else
-        {
+        else if (ret == -ETIMEDOUT) {
+            LOG_WRN("DMIC read timed out");
+            k_sleep(K_MSEC(5));
+            continue;
+        }
+        else {
             LOG_ERR("DMIC read failed: %d", ret);
-            // Consider stopping the mic or attempting recovery
-            atomic_set(&mic_active, 0); // Stop the loop on error
-            // Optional: Try dmic_trigger STOP here?
-            mic_power_off(); // Power off on failure
-            break; // Exit thread
+            // Don't exit the thread, just retry after a delay
+            k_sleep(K_MSEC(100));
+            continue;
         }
     }
 
@@ -216,17 +241,7 @@ int mic_start()
                     K_PRIO_PREEMPT(7), 0, K_NO_WAIT); // Adjust priority if needed
     k_thread_name_set(&dmic_reader_thread_data, "dmic_reader");
 
-
-    // Start capturing data
-    ret = dmic_trigger(dmic_dev, DMIC_TRIGGER_START);
-    if (ret < 0) {
-        LOG_ERR("Failed to start DMIC trigger: %d", ret);
-        atomic_set(&mic_active, 0); // Prevent thread from doing much
-        // Allow some time for thread to potentially exit cleanly?
-        k_sleep(K_MSEC(50));
-        mic_power_off(); // Clean up
-        return ret;
-    }
+    // Triggering is now handled in the reader thread
 
     LOG_INF("Microphone started using Zephyr DMIC driver");
     return 0;

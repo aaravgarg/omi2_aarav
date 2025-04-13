@@ -24,20 +24,26 @@ void set_codec_callback(codec_callback callback)
 // Input
 //
 
-uint8_t codec_ring_buffer_data[AUDIO_BUFFER_SAMPLES * 2]; // 2 bytes per sample
+__attribute__((section(".bss.SRAM1"))) 
+uint8_t codec_ring_buffer_data[AUDIO_BUFFER_SAMPLES * 2];
+ // 2 bytes per sample
 struct ring_buf codec_ring_buf;
 
 int codec_receive_pcm(int16_t *data, size_t len)
 {
-    int written = ring_buf_put(&codec_ring_buf, (uint8_t *)data, len * 2);
-    if (written != len * 2)
-    {
-        LOG_ERR("Failed to write %d bytes to codec ring buffer", len * 2);
-        return -1;
+    int max_retries = 5;
+    for (int i = 0; i < max_retries; i++) {
+        int written = ring_buf_put(&codec_ring_buf, (uint8_t *)data, len * 2);
+        if (written == len * 2) {
+            LOG_INF("PCM written to codec ring buffer: %d bytes", written);
+            return 0;
+        }
+        LOG_WRN("Ring buffer full. Retrying (%d/%d)...", i + 1, max_retries);
+        k_sleep(K_MSEC(2));
     }
 
-    LOG_INF("PCM written to codec ring buffer: %d bytes", written);
-    return 0;
+    LOG_ERR("Failed to write %d bytes to codec ring buffer after retries", len * 2);
+    return -1;
 }
 
 //
@@ -95,36 +101,75 @@ static OpusEncoder *const m_opus_state = (OpusEncoder *)m_opus_encoder;
 //     }
 // }
 
+// void codec_entry()
+// {
+//     uint16_t output_size;
+//     while (1)
+//     {
+//         // size_t available = ring_buf_size_get(&codec_ring_buf);
+//         // if (available < CODEC_PACKAGE_SAMPLES * 2)
+//         // {
+//         //     LOG_WRN("Not enough PCM data in buffer: %d bytes available", available);
+//         //     k_sleep(K_MSEC(10));
+//         //     continue;
+//         // }
+
+//         // LOG_INF("Enough PCM data available: %d bytes", available);
+//         // ring_buf_get(&codec_ring_buf, (uint8_t *)codec_input_samples, CODEC_PACKAGE_SAMPLES * 2);
+//         // output_size = execute_codec();
+
+//         // if (_callback)
+//         // {
+//         //     LOG_INF("Calling codec callback with %d bytes", output_size);
+//         //     _callback(codec_output_bytes, output_size);
+//         // }
+//         // else
+//         // {
+//         //     LOG_ERR("Codec callback is NULL");
+//         // }
+
+//         // k_yield();
+        
+//         while (ring_buf_size_get(&codec_ring_buf) >= CODEC_PACKAGE_SAMPLES * 2) {
+//             ring_buf_get(&codec_ring_buf, (uint8_t *)codec_input_samples, CODEC_PACKAGE_SAMPLES * 2);
+//             output_size = execute_codec();
+
+//             if (_callback) {
+//                 LOG_INF("Calling codec callback with %d bytes", output_size);
+//                 _callback(codec_output_bytes, output_size);
+//             } else {
+//                 LOG_ERR("Codec callback is NULL");
+//             }
+//         }
+//         // Instead of waiting 10 ms only when not enough data, do a very short sleep to yield CPU
+//         k_sleep(K_MSEC(1));
+//     }
+// }
+
 void codec_entry()
 {
     uint16_t output_size;
     while (1)
     {
-        size_t available = ring_buf_size_get(&codec_ring_buf);
-        if (available < CODEC_PACKAGE_SAMPLES * 2)
+        size_t bytes_available = ring_buf_size_get(&codec_ring_buf);
+        if (bytes_available >= CODEC_PACKAGE_SAMPLES * 2)
         {
-            LOG_WRN("Not enough PCM data in buffer: %d bytes available", available);
-            k_sleep(K_MSEC(10));
-            continue;
-        }
+            // Drain multiple packets in one go
+            while (ring_buf_size_get(&codec_ring_buf) >= CODEC_PACKAGE_SAMPLES * 2) {
+                ring_buf_get(&codec_ring_buf, (uint8_t *)codec_input_samples, CODEC_PACKAGE_SAMPLES * 2);
+                output_size = execute_codec();
 
-        LOG_INF("Enough PCM data available: %d bytes", available);
-        ring_buf_get(&codec_ring_buf, (uint8_t *)codec_input_samples, CODEC_PACKAGE_SAMPLES * 2);
-        output_size = execute_codec();
-
-        if (_callback)
-        {
-            LOG_INF("Calling codec callback with %d bytes", output_size);
-            _callback(codec_output_bytes, output_size);
+                if (_callback) {
+                    _callback(codec_output_bytes, output_size);
+                }
+            }
         }
-        else
-        {
-            LOG_ERR("Codec callback is NULL");
+        else {
+            k_sleep(K_MSEC(1)); // Yield when buffer is empty
         }
-
-        k_yield();
     }
 }
+
 
 
 int codec_start()

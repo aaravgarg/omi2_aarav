@@ -33,6 +33,11 @@
 //     k_fatal_halt(reason);
 // }
 
+#include <zephyr/sys/ring_buffer.h>
+
+#define AUDIO_RINGBUF_SIZE (CODEC_OUTPUT_MAX_BYTES + 2) * 24  // holds 64 audio packets
+RING_BUF_DECLARE(audio_ringbuf, AUDIO_RINGBUF_SIZE);
+
 /* Timing constants for boot sequence LED pattern */
 #define BOOT_BLINK_DURATION_MS 600
 #define BOOT_PAUSE_DURATION_MS 200
@@ -53,19 +58,73 @@ LOG_MODULE_REGISTER(main, CONFIG_LOG_DEFAULT_LEVEL);
  * @param data Pointer to encoded audio data
  * @param len Length of the encoded data in bytes
  */
+// static void codec_handler(uint8_t *data, size_t len)
+// {
+//     LOG_INF("Codec handler: encoded data ready (len: %d)", len);
+//     int err = broadcast_audio_packets(data, len);
+//     if (err)
+//     {
+//         LOG_ERR("Failed to broadcast audio packets: %d", err);
+//     }
+//     else
+//     {
+//         LOG_INF("Broadcast successful");
+//     }
+// }
 static void codec_handler(uint8_t *data, size_t len)
 {
-    LOG_INF("Codec handler: encoded data ready (len: %d)", len);
-    int err = broadcast_audio_packets(data, len);
-    if (err)
+    if (len > CODEC_OUTPUT_MAX_BYTES)
     {
-        LOG_ERR("Failed to broadcast audio packets: %d", err);
+        LOG_ERR("Encoded audio too big: %d", len);
+        return;
     }
-    else
+
+    uint8_t buf[CODEC_OUTPUT_MAX_BYTES + 2];
+    buf[0] = len & 0xFF;
+    buf[1] = (len >> 8) & 0xFF;
+    memcpy(&buf[2], data, len);
+
+    uint32_t written = ring_buf_put(&audio_ringbuf, buf, len + 2);
+    if (written < len + 2)
     {
-        LOG_INF("Broadcast successful");
+        LOG_WRN("Audio ring buffer full, dropping packet");
     }
 }
+
+
+void audio_broadcast_thread(void *arg1, void *arg2, void *arg3)
+{
+    uint8_t temp[CODEC_OUTPUT_MAX_BYTES + 2];
+
+    while (1)
+    {
+        uint32_t size = ring_buf_get(&audio_ringbuf, temp, sizeof(temp));
+        if (size < 3)
+        {
+            k_sleep(K_MSEC(1));
+            continue;
+        }
+
+        uint16_t len = temp[0] | (temp[1] << 8);
+        if (len > CODEC_OUTPUT_MAX_BYTES || size < len + 2)
+        {
+            LOG_WRN("Corrupt audio packet, skipped");
+            continue;
+        }
+
+        int err = broadcast_audio_packets(&temp[2], len);
+        if (err)
+        {
+            LOG_ERR("Broadcast failed: %d", err);
+        }
+    }
+}
+
+
+K_THREAD_STACK_DEFINE(audio_broadcast_stack, 2048);
+static struct k_thread audio_broadcast_thread_data;
+
+
 
 /**
  * @brief Handler for Bluetooth controller assertions
@@ -375,6 +434,13 @@ int main(void)
         set_led_blue(false);
         return err;
     }
+
+    k_thread_create(&audio_broadcast_thread_data, audio_broadcast_stack,
+    K_THREAD_STACK_SIZEOF(audio_broadcast_stack),
+    audio_broadcast_thread, NULL, NULL, NULL,
+    K_PRIO_PREEMPT(6), 0, K_NO_WAIT);
+    k_thread_name_set(&audio_broadcast_thread_data, "audio_broadcaster");
+
 
     set_led_blue(false);
 
