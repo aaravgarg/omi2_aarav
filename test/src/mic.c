@@ -1,216 +1,285 @@
-/*
- * Production Microphone Driver Implementation
- * Uses the Zephyr DMIC (Digital Microphone) driver interface
- */
 #include <zephyr/logging/log.h>
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
-#include <zephyr/audio/dmic.h>     /* Digital microphone interface driver */
-#include <zephyr/sys/util.h>
+#include <zephyr/audio/dmic.h>
+#include <stdlib.h>
+
+#include "config.h"
+#include "codec.h"
 #include "mic.h"
 
 LOG_MODULE_REGISTER(mic, CONFIG_LOG_DEFAULT_LEVEL);
 
-/* Audio configuration parameters */
-#define BITS_PER_BYTE 8
-#define SAMPLE_RATE_HZ 16000       /* 16kHz sampling rate */
-#define SAMPLE_BITS 16             /* 16-bit samples */
-#define TIMEOUT_MS 1000            /* Read timeout in milliseconds */
-#define BLOCK_SIZE 1600  /* Use the existing buffer size definition */
-#define BLOCK_COUNT 2              /* Number of memory blocks for buffering (double-buffer) */
+// --- Configuration ---
+#define SAMPLE_RATE_HZ 16000
+#define SAMPLE_BITS 16
+#define BYTES_PER_SAMPLE (SAMPLE_BITS / 8)
+#define DMIC_TIMEOUT_MS 1000
+#define DMIC_BLOCK_SIZE_BYTES (MIC_BUFFER_SAMPLES * BYTES_PER_SAMPLE)
+// Need enough blocks for double buffering at least
+#define DMIC_MEM_SLAB_BLOCK_COUNT 4
 
-/* Memory allocation for audio buffers */
-K_MEM_SLAB_DEFINE_STATIC(mem_slab, BLOCK_SIZE * sizeof(int16_t), BLOCK_COUNT, 4);
+// --- Device and GPIO ---
+static const struct device *const dmic_dev = DEVICE_DT_GET(DT_ALIAS(dmic0));
 
-/* Device references */
-static const struct device *const dmic = DEVICE_DT_GET(DT_ALIAS(dmic0));  /* Get DMIC device from device tree */
+// Get GPIO specs from Devicetree (make sure these exist in your DTS)
+static const struct gpio_dt_spec mic_en = GPIO_DT_SPEC_GET_OR(DT_NODELABEL(pdm_en_pin), gpios, {0});
+static const struct gpio_dt_spec mic_thsel = GPIO_DT_SPEC_GET_OR(DT_NODELABEL(pdm_thsel_pin), gpios, {0});
+static const struct gpio_dt_spec mic_wake = GPIO_DT_SPEC_GET_OR(DT_NODELABEL(pdm_wake_pin), gpios, {0});
 
-/* Microphone control GPIO pins from device tree */
-static const struct gpio_dt_spec mic_en = GPIO_DT_SPEC_GET_OR(DT_NODELABEL(pdm_en_pin), gpios, {0});        /* Enable pin */
-static const struct gpio_dt_spec mic_thsel = GPIO_DT_SPEC_GET_OR(DT_NODELABEL(pdm_thsel_pin), gpios, {0});  /* Threshold select pin */
-static const struct gpio_dt_spec mic_wake = GPIO_DT_SPEC_GET_OR(DT_NODELABEL(pdm_wake_pin), gpios, {0});    /* Wake pin */
+// --- Memory Management ---
+K_MEM_SLAB_DEFINE_STATIC(dmic_mem_slab, DMIC_BLOCK_SIZE_BYTES, DMIC_MEM_SLAB_BLOCK_COUNT, 4);
 
-/* PCM stream configuration */
-static struct pcm_stream_cfg stream = {
-	.pcm_rate = SAMPLE_RATE_HZ,
-	.pcm_width = SAMPLE_BITS,
-	.block_size = BLOCK_SIZE * sizeof(int16_t),
-	.mem_slab = &mem_slab,
+// --- DMIC Configuration Structs ---
+static struct pcm_stream_cfg stream_cfg = {
+    .pcm_rate = SAMPLE_RATE_HZ,
+    .pcm_width = SAMPLE_BITS,
+    .block_size = DMIC_BLOCK_SIZE_BYTES,
+    .mem_slab = &dmic_mem_slab,
 };
 
-/* DMIC configuration */
-static struct dmic_cfg cfg = {
-	.io = {
-		.min_pdm_clk_freq = 1000000,  /* Minimum PDM clock frequency (1MHz) */
-		.max_pdm_clk_freq = 3500000,  /* Maximum PDM clock frequency (3.5MHz) */
-		.min_pdm_clk_dc = 40,         /* Minimum clock duty cycle percentage */
-		.max_pdm_clk_dc = 60,         /* Maximum clock duty cycle percentage */
-	},
-	.streams = &stream,
-	.channel = {
-		.req_num_streams = 1,         /* Request one audio stream */
-		.req_num_chan = 2,            /* Request stereo (2 channels) */
-	},
+// Configure for MONO operation on the LEFT channel
+static struct dmic_cfg drv_cfg = {
+    .io = {
+        /* These values depend on board, copied from example, adjust if needed */
+        .min_pdm_clk_freq = 1000000,
+        .max_pdm_clk_freq = 3500000,
+        .min_pdm_clk_dc = 40,
+        .max_pdm_clk_dc = 60,
+    },
+    .streams = &stream_cfg,
+    .channel = {
+        .req_num_streams = 1,
+        .req_num_chan = 1, // Requesting MONO
+        // Map logical channel 0 to physical channel 0 (LEFT)
+        // req_chan_map_lo will be set in mic_start
+        .req_chan_map_hi = 0, // Not used for MONO
+    },
 };
 
-/* Initialization flag */
-static bool initialized = false;
+// --- State ---
+static atomic_t mic_active = ATOMIC_INIT(0); // Track if mic processing is active
 
-/* Callback function for audio processing */
-static volatile mix_handler _callback = NULL;
-
-/* Audio processing thread data */
-#define STACK_SIZE 1024
-#define THREAD_PRIORITY 5
-static struct k_thread mic_thread;
-static K_THREAD_STACK_DEFINE(mic_stack, STACK_SIZE);
-static volatile bool mic_running = false;
-
-/* Audio processing thread function */
-static void mic_processing_thread(void *p1, void *p2, void *p3)
+// --- Power Control ---
+static int mic_power_off(void)
 {
-    ARG_UNUSED(p1);
-    ARG_UNUSED(p2);
-    ARG_UNUSED(p3);
-    
+    int ret = 0;
+    LOG_INF("Powering off microphone");
+
+    // Configure pins according to example OFF state
+    if (mic_thsel.port) {
+        ret = gpio_pin_configure_dt(&mic_thsel, GPIO_OUTPUT_INACTIVE);
+         if (ret) LOG_ERR("Failed to configure THSEL for OFF: %d", ret);
+    }
+    if (mic_wake.port) {
+         // Wake pin often acts as input when mic is off/sleeping
+        ret = gpio_pin_configure_dt(&mic_wake, GPIO_INPUT);
+         if (ret) LOG_ERR("Failed to configure WAKE for OFF: %d", ret);
+    }
+    if (mic_en.port) {
+        ret = gpio_pin_configure_dt(&mic_en, GPIO_OUTPUT_INACTIVE);
+         if (ret) LOG_ERR("Failed to configure EN for OFF: %d", ret);
+    }
+    return ret; // Return last error code
+}
+
+static int mic_power_on(void)
+{
+    int ret = 0;
+    LOG_INF("Powering on microphone");
+
+    // Configure pins according to example ON state
+    if (mic_thsel.port) {
+         // Example sets THSEL high for ON
+        ret = gpio_pin_configure_dt(&mic_thsel, GPIO_OUTPUT_ACTIVE);
+         if (ret) LOG_ERR("Failed to configure THSEL for ON: %d", ret);
+    }
+    if (mic_wake.port) {
+        // Wake pin might be input or output depending on mic usage
+        ret = gpio_pin_configure_dt(&mic_wake, GPIO_INPUT); // Example uses input
+         if (ret) LOG_ERR("Failed to configure WAKE for ON: %d", ret);
+    }
+    if (mic_en.port) {
+        ret = gpio_pin_configure_dt(&mic_en, GPIO_OUTPUT_ACTIVE);
+         if (ret) LOG_ERR("Failed to configure EN for ON: %d", ret);
+    }
+    k_sleep(K_MSEC(5)); // Allow time for mic to power up
+    return ret; // Return last error code
+}
+
+
+// --- Data Reading Thread ---
+K_THREAD_STACK_DEFINE(dmic_reader_stack, 2048); // Adjust stack size if needed
+static struct k_thread dmic_reader_thread_data;
+
+static void dmic_reader_thread(void *p1, void *p2, void *p3)
+{
+    int ret;
     void *buffer;
-    uint32_t size;
-    
-    while (mic_running) {
-        /* Read audio data from the microphone */
-        if (dmic_read(dmic, 0, &buffer, &size, TIMEOUT_MS) == 0) {
-            /* Call user callback with audio data if registered */
-            if (_callback) {
-                /* Cast buffer to int16_t* as expected by callback */
-                _callback((int16_t *)buffer);
+    uint32_t buffer_size;
+
+    LOG_INF("DMIC reader thread started");
+
+    while (atomic_get(&mic_active))
+    {
+        // Blocking read for the next buffer
+        ret = dmic_read(dmic_dev, 0, &buffer, &buffer_size, DMIC_TIMEOUT_MS);
+
+        if (ret == 0)
+        {
+            if (buffer_size != DMIC_BLOCK_SIZE_BYTES) {
+                 LOG_WRN("DMIC read unexpected size: %u (expected %u)", buffer_size, DMIC_BLOCK_SIZE_BYTES);
+                 // Still process if callback exists, maybe partial buffer?
             }
-            
-            /* Free the buffer */
-            k_mem_slab_free(&mem_slab, buffer);
-        } else {
-            LOG_ERR("DMIC read failed");
-            k_msleep(10); /* Short delay to avoid CPU spinning on failures */
+
+            // NEW: Directly call codec_receive_pcm
+            int codec_ret = codec_receive_pcm((int16_t *)buffer, buffer_size / BYTES_PER_SAMPLE);
+            // Retry mechanism for backpressure
+            while (codec_ret != 0) {
+                LOG_ERR("Failed to write PCM data to codec ring buffer: %d. Retrying...", codec_ret);
+                k_sleep(K_MSEC(5)); // Wait for codec to consume data
+                codec_ret = codec_receive_pcm((int16_t *)buffer, buffer_size / BYTES_PER_SAMPLE);
+                // TODO: Add a max retry count?
+            }
+            // END NEW
+            // Free the buffer back to the slab *after* successful write
+            k_mem_slab_free(&dmic_mem_slab, buffer);
+            buffer = NULL;
+        }
+        else if (ret == -ETIMEDOUT)
+        {
+            LOG_WRN("DMIC read timed out");
+            // Optional: Try to stop/start trigger?
+        }
+        else
+        {
+            LOG_ERR("DMIC read failed: %d", ret);
+            // Consider stopping the mic or attempting recovery
+            atomic_set(&mic_active, 0); // Stop the loop on error
+            // Optional: Try dmic_trigger STOP here?
+            mic_power_off(); // Power off on failure
+            break; // Exit thread
         }
     }
+
+    LOG_INF("DMIC reader thread exiting");
+    // Ensure trigger is stopped if loop terminates
+    ret = dmic_trigger(dmic_dev, DMIC_TRIGGER_STOP);
+    if (ret < 0) {
+         LOG_ERR("DMIC STOP trigger failed on exit: %d", ret);
+    }
 }
 
-/* 
- * Power off the microphone to save power
- * Configures GPIO pins to appropriate states for power off
- */
-void mic_off()
-{
-    if (mic_running) {
-        mic_running = false;
-        dmic_trigger(dmic, DMIC_TRIGGER_STOP);
-        k_thread_abort(&mic_thread);
-    }
-    
-    /* Configure and set GPIO pins for power off */
-    if (device_is_ready(mic_en.port)) {
-        gpio_pin_configure_dt(&mic_en, GPIO_OUTPUT);
-        gpio_pin_set_dt(&mic_en, 0);
-    }
-    
-    if (device_is_ready(mic_thsel.port)) {
-        gpio_pin_configure_dt(&mic_thsel, GPIO_OUTPUT);
-        gpio_pin_set_dt(&mic_thsel, 0);
-    }
-    
-    if (device_is_ready(mic_wake.port)) {
-        gpio_pin_configure_dt(&mic_wake, GPIO_INPUT);
-    }
-    
-    LOG_INF("Microphone powered off");
-}
 
-/* 
- * Power on the microphone
- * Configures GPIO pins to appropriate states for power on
- */
-void mic_on()
-{
-    /* Configure and set GPIO pins for power on */
-    if (device_is_ready(mic_en.port)) {
-        gpio_pin_configure_dt(&mic_en, GPIO_OUTPUT);
-        gpio_pin_set_dt(&mic_en, 1);
-    }
-    
-    if (device_is_ready(mic_thsel.port)) {
-        gpio_pin_configure_dt(&mic_thsel, GPIO_OUTPUT);
-        gpio_pin_set_dt(&mic_thsel, 1);
-    }
-    
-    if (device_is_ready(mic_wake.port)) {
-        gpio_pin_configure_dt(&mic_wake, GPIO_INPUT);
-    }
-    
-    LOG_INF("Microphone powered on");
-}
+// --- Public API ---
 
-/*
- * Start the microphone
- * Initializes the DMIC peripheral and starts audio capture
- */
 int mic_start()
 {
-    /* Check if DMIC device is ready */
-    if (!device_is_ready(dmic)) {
-        LOG_ERR("DMIC device not ready");
+    int ret;
+
+    if (!device_is_ready(dmic_dev)) {
+        LOG_ERR("DMIC device %s not ready", dmic_dev->name);
         return -ENODEV;
     }
-    
-    /* Check if already initialized and running */
-    if (initialized && mic_running) {
-        LOG_INF("Microphone already started");
-        return 0;
-    }
-    
-    /* Stop any previous instance if running */
-    if (mic_running) {
-        mic_running = false;
-        dmic_trigger(dmic, DMIC_TRIGGER_STOP);
-        k_thread_abort(&mic_thread);
+
+    // Check if GPIOs were found (port != NULL)
+    if (!mic_en.port || !mic_thsel.port /* || !mic_wake.port */) { // Wake might be optional
+         LOG_WRN("One or more MIC control GPIOs not found in DTS!");
+         // Decide if this is fatal or not based on hardware requirements
     }
 
-    /* Power on the microphone */
-    mic_on();
-    
-    /* Set up the channel mapping configuration */
-    cfg.channel.req_chan_map_lo = dmic_build_channel_map(0, 0, PDM_CHAN_LEFT) | 
-                                 dmic_build_channel_map(1, 0, PDM_CHAN_RIGHT);
-    
-    /* Configure the DMIC with our settings */
-    int ret = dmic_configure(dmic, &cfg);
-    if (ret < 0) {
-        LOG_ERR("Failed to configure DMIC (%d)", ret);
+    // Power on the microphone
+    ret = mic_power_on();
+    if (ret != 0) {
+        LOG_ERR("Failed to power on microphone pins: %d", ret);
         return ret;
     }
-    
-    /* Start the microphone */
-    ret = dmic_trigger(dmic, DMIC_TRIGGER_START);
+
+    // Set the channel map before configuring
+    drv_cfg.channel.req_chan_map_lo = dmic_build_channel_map(0, 0, PDM_CHAN_LEFT);
+
+    // Configure the DMIC driver
+    ret = dmic_configure(dmic_dev, &drv_cfg);
     if (ret < 0) {
-        LOG_ERR("START trigger failed (%d)", ret);
+        LOG_ERR("Failed to configure DMIC driver: %d", ret);
+        mic_power_off(); // Clean up
         return ret;
     }
-    
-    /* Start audio processing thread */
-    mic_running = true;
-    k_thread_create(&mic_thread, mic_stack, STACK_SIZE,
-                   mic_processing_thread, NULL, NULL, NULL,
-                   THREAD_PRIORITY, 0, K_NO_WAIT);
-    
-    initialized = true;
-    LOG_INF("Audio microphone started");
+    LOG_INF("DMIC driver configured successfully");
+
+    // Start the reader thread only if configuration is successful
+    atomic_set(&mic_active, 1);
+    k_thread_create(&dmic_reader_thread_data, dmic_reader_stack,
+                    K_THREAD_STACK_SIZEOF(dmic_reader_stack),
+                    dmic_reader_thread, NULL, NULL, NULL,
+                    K_PRIO_PREEMPT(7), 0, K_NO_WAIT); // Adjust priority if needed
+    k_thread_name_set(&dmic_reader_thread_data, "dmic_reader");
+
+
+    // Start capturing data
+    ret = dmic_trigger(dmic_dev, DMIC_TRIGGER_START);
+    if (ret < 0) {
+        LOG_ERR("Failed to start DMIC trigger: %d", ret);
+        atomic_set(&mic_active, 0); // Prevent thread from doing much
+        // Allow some time for thread to potentially exit cleanly?
+        k_sleep(K_MSEC(50));
+        mic_power_off(); // Clean up
+        return ret;
+    }
+
+    LOG_INF("Microphone started using Zephyr DMIC driver");
     return 0;
 }
 
-/*
- * Register callback function for processing audio data
- * This function will be called whenever new audio data is available
- */
-void set_mic_callback(mix_handler callback) 
+// Simple ON/OFF control - assumes mic_start was successful
+void mic_on()
 {
-    _callback = callback;
+    // If already active or driver not ready, do nothing?
+    if (!atomic_get(&mic_active) || !device_is_ready(dmic_dev)) {
+         LOG_WRN("Mic cannot be turned ON (not started or driver not ready)");
+         // Potentially call mic_start() here? Or require mic_start first?
+         // For now, let's just power the pin if available.
+         if(mic_en.port) {
+             mic_power_on(); // Might be redundant if already on
+         }
+         return;
+    }
+
+    // Resume capture if it was stopped
+    int ret = dmic_trigger(dmic_dev, DMIC_TRIGGER_START);
+    if (ret < 0) {
+         LOG_ERR("Failed to trigger START in mic_on: %d", ret);
+    } else {
+         LOG_INF("Mic capture resumed.");
+    }
+}
+
+void mic_off()
+{
+    // If not active or driver not ready, do nothing?
+    if (!atomic_get(&mic_active) || !device_is_ready(dmic_dev)) {
+         LOG_WRN("Mic cannot be turned OFF (not active or driver not ready)");
+          // Power off pins just in case
+         if(mic_en.port) {
+             mic_power_off();
+         }
+         return;
+    }
+
+    // Stop capture
+    int ret = dmic_trigger(dmic_dev, DMIC_TRIGGER_STOP);
+    if (ret < 0) {
+        LOG_ERR("Failed to trigger STOP in mic_off: %d", ret);
+    } else {
+         LOG_INF("Mic capture stopped.");
+    }
+
+    // Consider stopping the thread? For now, just stopping trigger.
+    // Powering off might be too aggressive if user wants to quickly toggle.
+    // Let's just power off the enable pin for simplicity.
+    if(mic_en.port) {
+        gpio_pin_configure_dt(&mic_en, GPIO_OUTPUT_INACTIVE);
+    }
+
 }

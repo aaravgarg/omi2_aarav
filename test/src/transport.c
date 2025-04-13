@@ -125,9 +125,9 @@ static void _transport_connected(struct bt_conn *conn, uint8_t err)
     current_connection = bt_conn_ref(conn);
     current_mtu = info.le.data_len->tx_max_len;
     LOG_INF("Transport connected");
-    LOG_DBG("Interval: %d, latency: %d, timeout: %d", info.le.interval, info.le.latency, info.le.timeout);
-    LOG_DBG("TX PHY %s, RX PHY %s", phy2str(info.le.phy->tx_phy), phy2str(info.le.phy->rx_phy));
-    LOG_DBG("LE data len updated: TX (len: %d time: %d) RX (len: %d time: %d)", info.le.data_len->tx_max_len, info.le.data_len->tx_max_time, info.le.data_len->rx_max_len, info.le.data_len->rx_max_time);
+    LOG_INF("Interval: %d, latency: %d, timeout: %d", info.le.interval, info.le.latency, info.le.timeout);
+    LOG_INF("TX PHY %s, RX PHY %s", phy2str(info.le.phy->tx_phy), phy2str(info.le.phy->rx_phy));
+    LOG_INF("LE data len updated: TX (len: %d time: %d) RX (len: %d time: %d)", info.le.data_len->tx_max_len, info.le.data_len->tx_max_time, info.le.data_len->rx_max_len, info.le.data_len->rx_max_time);
 
     k_work_schedule(&battery_work, K_MSEC(100)); // run immediately
 
@@ -179,8 +179,8 @@ static void _transport_disconnected(struct bt_conn *conn, uint8_t err)
 static bool _le_param_req(struct bt_conn *conn, struct bt_le_conn_param *param)
 {
     LOG_INF("Transport connection parameters update request received.");
-    LOG_DBG("Minimum interval: %d, Maximum interval: %d", param->interval_min, param->interval_max);
-    LOG_DBG("Latency: %d, Timeout: %d", param->latency, param->timeout);
+    LOG_INF("Minimum interval: %d, Maximum interval: %d", param->interval_min, param->interval_max);
+    LOG_INF("Latency: %d, Timeout: %d", param->latency, param->timeout);
 
     return true;
 }
@@ -200,7 +200,7 @@ static void _le_param_updated(struct bt_conn *conn, uint16_t interval,
                               uint16_t latency, uint16_t timeout)
 {
     LOG_INF("Connection parameters updated.");
-    LOG_DBG("[ interval: %d, latency: %d, timeout: %d ]", interval, latency, timeout);
+    LOG_INF("[ interval: %d, latency: %d, timeout: %d ]", interval, latency, timeout);
 }
 
 /**
@@ -231,7 +231,7 @@ static void _le_phy_updated(struct bt_conn *conn,
 static void _le_data_length_updated(struct bt_conn *conn,
                                     struct bt_conn_le_data_len_info *info)
 {
-    LOG_DBG("LE data len updated: TX (len: %d time: %d)"
+    LOG_INF("LE data len updated: TX (len: %d time: %d)"
            " RX (len: %d time: %d)",
            info->tx_max_len,
            info->tx_max_time, info->rx_max_len, info->rx_max_time);
@@ -598,7 +598,7 @@ static void audio_ccc_config_changed_handler(const struct bt_gatt_attr *attr, ui
  */
 static ssize_t audio_data_read_characteristic(struct bt_conn *conn, const struct bt_gatt_attr *attr, void *buf, uint16_t len, uint16_t offset)
 {
-    LOG_DBG("audio_data_read_characteristic");
+    LOG_INF("audio_data_read_characteristic");
     return bt_gatt_attr_read(conn, attr, buf, len, offset, NULL, 0);
 }
 
@@ -617,7 +617,7 @@ static ssize_t audio_data_read_characteristic(struct bt_conn *conn, const struct
 static ssize_t audio_codec_read_characteristic(struct bt_conn *conn, const struct bt_gatt_attr *attr, void *buf, uint16_t len, uint16_t offset)
 {
     uint8_t value[1] = {CODEC_ID};
-    LOG_DBG("audio_codec_read_characteristic %d", CODEC_ID);
+    LOG_INF("audio_codec_read_characteristic %d", CODEC_ID);
     return bt_gatt_attr_read(conn, attr, buf, len, offset, value, sizeof(value));
 }
 
@@ -885,16 +885,27 @@ static bool push_to_gatt(struct bt_conn *conn)
         offset += packet_size;
         index++;
 
+        LOG_INF("Pushing packet of %d bytes via BLE", packet_size + NET_BUFFER_HEADER_SIZE);
+
         while (true)
         {
             // Try send notification
             int err = bt_gatt_notify(conn, &audio_service.attrs[1], pusher_temp_data, packet_size + NET_BUFFER_HEADER_SIZE);
 
+            if (err)
+            {
+                LOG_ERR("bt_gatt_notify failed: %d", err);
+            }
+            else
+            {
+                LOG_INF("Notification sent");
+            }
+
             // Log failure
             if (err)
             {
-                LOG_DBG("bt_gatt_notify failed (err %d)", err);
-                LOG_DBG("MTU: %d, packet_size: %d", current_mtu, packet_size + NET_BUFFER_HEADER_SIZE);
+                LOG_INF("bt_gatt_notify failed (err %d)", err);
+                LOG_INF("MTU: %d, packet_size: %d", current_mtu, packet_size + NET_BUFFER_HEADER_SIZE);
                 k_sleep(K_MSEC(1));
             }
 
@@ -1041,13 +1052,13 @@ void pusher(void)
         {
             connection_was_true = false;
         }
-        if (!file_size_updated) 
-        {
-            LOG_PRINTK("updating file size\n");
-            update_file_size();
+        // if (!file_size_updated) 
+        // {
+        //     LOG_PRINTK("updating file size\n");
+        //     update_file_size();
             
-            file_size_updated = true;
-        }
+        //     file_size_updated = true;
+        // }
         if (conn)
         {
             conn = bt_conn_ref(conn);
@@ -1085,7 +1096,7 @@ void pusher(void)
              {
                 update_file_size();
                 heartbeat_count = 0;
-                LOG_PRINTK("drawing\n");
+                LOG_INF("drawing\n");
              }
             }
             else 
@@ -1178,7 +1189,7 @@ int bt_on()
  */
 int transport_start()
 {
-    k_mutex_init(&write_sdcard_mutex);
+    // k_mutex_init(&write_sdcard_mutex);
     // Configure callbacks
     bt_conn_cb_register(&_callback_references);
 

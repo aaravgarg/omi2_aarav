@@ -26,17 +26,17 @@ void set_codec_callback(codec_callback callback)
 
 uint8_t codec_ring_buffer_data[AUDIO_BUFFER_SAMPLES * 2]; // 2 bytes per sample
 struct ring_buf codec_ring_buf;
-int codec_receive_pcm(int16_t *data, size_t len) //this gets called after mic data is finished 
-{   
-   
+
+int codec_receive_pcm(int16_t *data, size_t len)
+{
     int written = ring_buf_put(&codec_ring_buf, (uint8_t *)data, len * 2);
     if (written != len * 2)
     {
         LOG_ERR("Failed to write %d bytes to codec ring buffer", len * 2);
         return -1;
     }
-    
 
+    LOG_INF("PCM written to codec ring buffer: %d bytes", written);
     return 0;
 }
 
@@ -62,36 +62,70 @@ static uint8_t m_opus_encoder[OPUS_ENCODER_SIZE];
 static OpusEncoder *const m_opus_state = (OpusEncoder *)m_opus_encoder;
 #endif
 
+// void codec_entry()
+// {
+
+//     LOG_INF("Codec: PCM data received, encoding now...");
+
+//     uint16_t output_size;
+//     while (1)
+//     {
+
+//         // Check if we have enough data
+//         if (ring_buf_size_get(&codec_ring_buf) < CODEC_PACKAGE_SAMPLES * 2)
+//         {
+//             // LOG_PRINTK("waiting on data....\n");
+//             k_sleep(K_MSEC(10));
+//             continue;
+//         }
+//         // Read package
+//         ring_buf_get(&codec_ring_buf, (uint8_t *)codec_input_samples, CODEC_PACKAGE_SAMPLES * 2);
+
+//         // Run Codec
+//         output_size = execute_codec();
+
+//         // Notify
+//         if (_callback)
+//         {
+//             _callback(codec_output_bytes, output_size);
+//         }
+
+//         // Yield
+//         k_yield();
+//     }
+// }
+
 void codec_entry()
 {
-
     uint16_t output_size;
     while (1)
     {
-
-        // Check if we have enough data
-        if (ring_buf_size_get(&codec_ring_buf) < CODEC_PACKAGE_SAMPLES * 2)
+        size_t available = ring_buf_size_get(&codec_ring_buf);
+        if (available < CODEC_PACKAGE_SAMPLES * 2)
         {
-            // LOG_PRINTK("waiting on data....\n");
+            LOG_WRN("Not enough PCM data in buffer: %d bytes available", available);
             k_sleep(K_MSEC(10));
             continue;
         }
-        // Read package
-        ring_buf_get(&codec_ring_buf, (uint8_t *)codec_input_samples, CODEC_PACKAGE_SAMPLES * 2);
 
-        // Run Codec
+        LOG_INF("Enough PCM data available: %d bytes", available);
+        ring_buf_get(&codec_ring_buf, (uint8_t *)codec_input_samples, CODEC_PACKAGE_SAMPLES * 2);
         output_size = execute_codec();
 
-        // Notify
         if (_callback)
         {
+            LOG_INF("Calling codec callback with %d bytes", output_size);
             _callback(codec_output_bytes, output_size);
         }
+        else
+        {
+            LOG_ERR("Codec callback is NULL");
+        }
 
-        // Yield
         k_yield();
     }
 }
+
 
 int codec_start()
 {
@@ -109,11 +143,13 @@ int codec_start()
     ASSERT_TRUE(opus_encoder_ctl(m_opus_state, OPUS_SET_DTX(0)) == OPUS_OK);
     ASSERT_TRUE(opus_encoder_ctl(m_opus_state, OPUS_SET_INBAND_FEC(0)) == OPUS_OK);
     ASSERT_TRUE(opus_encoder_ctl(m_opus_state, OPUS_SET_PACKET_LOSS_PERC(0)) == OPUS_OK);
+
+    LOG_INF("Codec initialized");
 #endif
 
     // Thread
     ring_buf_init(&codec_ring_buf, sizeof(codec_ring_buffer_data), codec_ring_buffer_data);
-    k_thread_create(&codec_thread, codec_stack, K_THREAD_STACK_SIZEOF(codec_stack), (k_thread_entry_t)codec_entry, NULL, NULL, NULL, K_PRIO_PREEMPT(4), 0, K_NO_WAIT);
+    k_thread_create(&codec_thread, codec_stack, K_THREAD_STACK_SIZEOF(codec_stack), (k_thread_entry_t)codec_entry, NULL, NULL, NULL, K_PRIO_PREEMPT(2), 0, K_NO_WAIT);
 
     LOG_INF("Codec started");
 
@@ -132,10 +168,10 @@ uint16_t execute_codec()
     opus_int32 size = opus_encode(m_opus_state, codec_input_samples, CODEC_PACKAGE_SAMPLES, codec_output_bytes, sizeof(codec_output_bytes));
     if (size < 0)
     {
-        LOG_WRN("Opus encoding failed: %d", size);
+        LOG_INF("Opus encoding failed: %d", size);
         return 0;
     }
-    LOG_DBG("Opus encoding success: %i", size);
+    LOG_INF("Opus encoding success, size: %d", size);
     return size;
 }
 

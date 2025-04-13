@@ -35,7 +35,7 @@ static void haptic_off_work_handler(struct k_work *work)
 {
     if (device_is_ready(motor.port)) {
         gpio_pin_set_dt(&motor, 0);
-        LOG_DBG("Haptic turned off by work handler");
+        LOG_INF("Haptic turned off by work handler");
     } else {
         LOG_ERR("Motor device not ready in work handler");
     }
@@ -101,5 +101,5 @@ void play_haptic_milli(uint32_t duration_ms)
     
     k_work_schedule(&haptic_off_work, K_MSEC(duration_ms));
 
-    LOG_DBG("Haptic activated for %u ms", duration_ms);
+    LOG_INF("Haptic activated for %u ms", duration_ms);
 }

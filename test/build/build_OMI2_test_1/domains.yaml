@@ -1,0 +1,10 @@
+default: test
+build_dir: /Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test_1
+domains:
+  - name: test
+    build_dir: /Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test_1/test
+  - name: ipc_radio
+    build_dir: /Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test_1/ipc_radio
+flash_order:
+  - ipc_radio
+  - test

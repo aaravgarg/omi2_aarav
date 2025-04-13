@@ -1,0 +1,43 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test_1/_sysbuild/sysbuild/images/CMakeFiles/test"
+		},
+		{
+			"file" : "/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test_1/_sysbuild/sysbuild/images/CMakeFiles/test.rule"
+		},
+		{
+			"file" : "/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test_1/_sysbuild/sysbuild/images/CMakeFiles/test-complete.rule"
+		},
+		{
+			"file" : "/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test_1/_sysbuild/sysbuild/images/test-prefix/src/test-stamp/test-build.rule"
+		},
+		{
+			"file" : "/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test_1/_sysbuild/sysbuild/images/test-prefix/src/test-stamp/test-configure.rule"
+		},
+		{
+			"file" : "/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test_1/_sysbuild/sysbuild/images/test-prefix/src/test-stamp/test-download.rule"
+		},
+		{
+			"file" : "/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test_1/_sysbuild/sysbuild/images/test-prefix/src/test-stamp/test-install.rule"
+		},
+		{
+			"file" : "/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test_1/_sysbuild/sysbuild/images/test-prefix/src/test-stamp/test-mkdir.rule"
+		},
+		{
+			"file" : "/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test_1/_sysbuild/sysbuild/images/test-prefix/src/test-stamp/test-patch.rule"
+		},
+		{
+			"file" : "/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test_1/_sysbuild/sysbuild/images/test-prefix/src/test-stamp/test-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"test"
+		],
+		"name" : "test"
+	}
+}

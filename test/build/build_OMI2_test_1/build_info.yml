@@ -1,0 +1,19 @@
+cmake:
+  application:
+    source-dir: /opt/nordic/ncs/v2.9.1/zephyr/share/sysbuild
+  board:
+    name: omi_nrf5340
+    qualifiers: nrf5340/cpuapp
+    revision: 
+  kconfig:
+    files:
+     - /Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test_1/_sysbuild/empty.conf
+     - /Users/aaravgarg/Coding/omi2_aarav/test/sysbuild.conf
+    user-files:
+     - /Users/aaravgarg/Coding/omi2_aarav/test/sysbuild.conf
+  sysbuild: true
+version: 0.1.0
+west:
+  command: /opt/nordic/ncs/toolchains/b8efef2ad5/bin/west build --build-dir /Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test_1 /Users/aaravgarg/Coding/omi2_aarav/test --pristine --board omi_nrf5340/nrf5340/cpuapp -- -DNCS_TOOLCHAIN_VERSION=NONE -DCONF_FILE=/Users/aaravgarg/Coding/omi2_aarav/test/omi2.conf -DCMAKE_EXPORT_COMPILE_COMMANDS=YES -DCMAKE_BUILD_TYPE=Debug -DBOARD_ROOT=/Users/aaravgarg/Coding/omi2_aarav
+  topdir: /opt/nordic/ncs/v2.9.1
+  version: 1.2.0
