@@ -1,12 +1,3 @@
-/**
- * @file transport.c
- * @brief Bluetooth communication implementation for audio streaming
- * 
- * This file provides the implementation of the Bluetooth Low Energy (BLE) 
- * communication stack, including service definitions, connection management, 
- * data transmission, and peripheral control. It handles audio data streaming,
- * device firmware updates, and sensor data broadcasting.
- */
 #include <zephyr/kernel.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/uuid.h>
@@ -26,8 +17,8 @@
 #include "storage.h"
 #include "button.h"
 #include "mic.h"
-#include "battery.h"  /* Battery header */
-// #include "friend.h"
+#include "battery.h" 
+
 LOG_MODULE_REGISTER(transport, CONFIG_LOG_DEFAULT_LEVEL);
 
 // Helper function to convert PHY to string
@@ -50,32 +41,14 @@ static const char *phy2str(uint8_t phy)
 /** Maximum size of storage in bytes (4GB - 1 byte) */
 #define MAX_STORAGE_BYTES 0xFFFF0000
 
-/** Flag indicating if the device is currently connected via Bluetooth */
-extern bool is_connected;
-
-/** Flag indicating if storage operations are active */
-extern bool storage_is_on;
-
-/** Number of audio files currently stored on the SD card */
-extern uint8_t file_count;
-
-/** Array storing file sizes for stored audio files */
-extern uint32_t file_num_array[2];
-
-/** Current active Bluetooth connection */
-struct bt_conn *current_connection = NULL;
-
-/** Current MTU (Maximum Transmission Unit) size negotiated for the BLE connection */
-uint16_t current_mtu = 0;
-
-/** Counter for packet sequence numbering to ensure ordered processing */
-uint16_t current_package_index = 0; 
-
-/**
- * Mutex for protecting SD card write operations
- * Ensures thread safety when multiple threads might access the SD card
- */
-struct k_mutex write_sdcard_mutex;
+extern bool is_connected; //is connected to a device
+extern bool storage_is_on; //is storage enabled
+extern uint8_t file_count; //number of files on the SD card
+extern uint32_t file_num_array[2]; //array storing file sizes for stored audio files
+struct bt_conn *current_connection = NULL; //current active Bluetooth connection
+uint16_t current_mtu = 0; //current MTU (Maximum Transmission Unit) size negotiated for the BLE connection
+uint16_t current_package_index = 0; //counter for packet sequence numbering to ensure ordered processing
+struct k_mutex write_sdcard_mutex; //mutex for protecting SD card write operations
 
 /**
  * Forward declarations for handler functions
@@ -120,14 +93,20 @@ static void _transport_connected(struct bt_conn *conn, uint8_t err)
         return;
     }
 
+    // Force MTU exchange
+    // err = bt_gatt_exchange_mtu(conn, NULL);
+    // if (err) {
+    //     LOG_ERR("MTU exchange failed: %d", err);
+    // }
+
     LOG_INF("bluetooth activated");
 
     current_connection = bt_conn_ref(conn);
     current_mtu = info.le.data_len->tx_max_len;
     LOG_INF("Transport connected");
-    LOG_DBG("Interval: %d, latency: %d, timeout: %d", info.le.interval, info.le.latency, info.le.timeout);
-    LOG_DBG("TX PHY %s, RX PHY %s", phy2str(info.le.phy->tx_phy), phy2str(info.le.phy->rx_phy));
-    LOG_DBG("LE data len updated: TX (len: %d time: %d) RX (len: %d time: %d)", info.le.data_len->tx_max_len, info.le.data_len->tx_max_time, info.le.data_len->rx_max_len, info.le.data_len->rx_max_time);
+    LOG_INF("Interval: %d, latency: %d, timeout: %d", info.le.interval, info.le.latency, info.le.timeout);
+    LOG_INF("TX PHY %s, RX PHY %s", phy2str(info.le.phy->tx_phy), phy2str(info.le.phy->rx_phy));
+    LOG_INF("LE data len updated: TX (len: %d time: %d) RX (len: %d time: %d)", info.le.data_len->tx_max_len, info.le.data_len->tx_max_time, info.le.data_len->rx_max_len, info.le.data_len->rx_max_time);
 
     k_work_schedule(&battery_work, K_MSEC(100)); // run immediately
 
@@ -179,8 +158,8 @@ static void _transport_disconnected(struct bt_conn *conn, uint8_t err)
 static bool _le_param_req(struct bt_conn *conn, struct bt_le_conn_param *param)
 {
     LOG_INF("Transport connection parameters update request received.");
-    LOG_DBG("Minimum interval: %d, Maximum interval: %d", param->interval_min, param->interval_max);
-    LOG_DBG("Latency: %d, Timeout: %d", param->latency, param->timeout);
+    LOG_INF("Minimum interval: %d, Maximum interval: %d", param->interval_min, param->interval_max);
+    LOG_INF("Latency: %d, Timeout: %d", param->latency, param->timeout);
 
     return true;
 }
@@ -200,7 +179,7 @@ static void _le_param_updated(struct bt_conn *conn, uint16_t interval,
                               uint16_t latency, uint16_t timeout)
 {
     LOG_INF("Connection parameters updated.");
-    LOG_DBG("[ interval: %d, latency: %d, timeout: %d ]", interval, latency, timeout);
+    LOG_INF("[ interval: %d, latency: %d, timeout: %d ]", interval, latency, timeout);
 }
 
 /**
@@ -231,7 +210,7 @@ static void _le_phy_updated(struct bt_conn *conn,
 static void _le_data_length_updated(struct bt_conn *conn,
                                     struct bt_conn_le_data_len_info *info)
 {
-    LOG_DBG("LE data len updated: TX (len: %d time: %d)"
+    LOG_INF("LE data len updated: TX (len: %d time: %d)"
            " RX (len: %d time: %d)",
            info->tx_max_len,
            info->tx_max_time, info->rx_max_len, info->rx_max_time);
@@ -598,7 +577,7 @@ static void audio_ccc_config_changed_handler(const struct bt_gatt_attr *attr, ui
  */
 static ssize_t audio_data_read_characteristic(struct bt_conn *conn, const struct bt_gatt_attr *attr, void *buf, uint16_t len, uint16_t offset)
 {
-    LOG_DBG("audio_data_read_characteristic");
+    LOG_INF("audio_data_read_characteristic");
     return bt_gatt_attr_read(conn, attr, buf, len, offset, NULL, 0);
 }
 
@@ -617,7 +596,7 @@ static ssize_t audio_data_read_characteristic(struct bt_conn *conn, const struct
 static ssize_t audio_codec_read_characteristic(struct bt_conn *conn, const struct bt_gatt_attr *attr, void *buf, uint16_t len, uint16_t offset)
 {
     uint8_t value[1] = {CODEC_ID};
-    LOG_DBG("audio_codec_read_characteristic %d", CODEC_ID);
+    LOG_INF("audio_codec_read_characteristic %d", CODEC_ID);
     return bt_gatt_attr_read(conn, attr, buf, len, offset, value, sizeof(value));
 }
 
@@ -893,8 +872,8 @@ static bool push_to_gatt(struct bt_conn *conn)
             // Log failure
             if (err)
             {
-                LOG_DBG("bt_gatt_notify failed (err %d)", err);
-                LOG_DBG("MTU: %d, packet_size: %d", current_mtu, packet_size + NET_BUFFER_HEADER_SIZE);
+                LOG_ERR("bt_gatt_notify failed (err %d)", err);
+                LOG_INF("MTU: %d, packet_size: %d", current_mtu, packet_size + NET_BUFFER_HEADER_SIZE);
                 k_sleep(K_MSEC(1));
             }
 
@@ -1041,13 +1020,13 @@ void pusher(void)
         {
             connection_was_true = false;
         }
-        if (!file_size_updated) 
-        {
-            LOG_PRINTK("updating file size\n");
-            update_file_size();
+        // if (!file_size_updated) 
+        // {
+        //     LOG_PRINTK("updating file size\n");
+        //     update_file_size();
             
-            file_size_updated = true;
-        }
+        //     file_size_updated = true;
+        // }
         if (conn)
         {
             conn = bt_conn_ref(conn);
@@ -1178,12 +1157,14 @@ int bt_on()
  */
 int transport_start()
 {
-    k_mutex_init(&write_sdcard_mutex);
+    // Initialize the mutex for SD card write operations
+    // k_mutex_init(&write_sdcard_mutex);
     // Configure callbacks
     bt_conn_cb_register(&_callback_references);
 
     // Enable Bluetooth
     int err = bt_enable(NULL);
+    k_msleep(1000);
     if (err)
     {
         LOG_ERR("Transport bluetooth init failed (err %d)", err);
@@ -1231,19 +1212,17 @@ int transport_start()
         LOG_INF("Advertising successfully started");
     }
 
-    // int battErr = 0;
-    // battErr |= battery_init();
-    // battErr |= battery_charge_start();
-    // if (battErr)
-    // {
-    //     LOG_ERR("Battery init failed (err %d)", battErr);
-    // }
-    // else
-    // {
-    //     LOG_INF("Battery initialized");
-    // }
-
-    // friend_init();
+    int battErr = 0;
+    battErr |= battery_init();
+    battErr |= battery_charge_start();
+    if (battErr)
+    {
+        LOG_ERR("Battery init failed (err %d)", battErr);
+    }
+    else
+    {
+        LOG_INF("Battery initialized");
+    }
 
     // Start pusher
     ring_buf_init(&ring_buf, sizeof(tx_queue), tx_queue);
@@ -1269,17 +1248,20 @@ struct bt_conn *get_current_connection()
  * @brief Send encoded audio data over Bluetooth
  * 
  * Queues encoded audio data (from the codec) into the ring buffer
- * for transmission by the pusher thread. Will retry if the buffer is full.
+ * for transmission by the pusher thread. Will return an error if the buffer is full.
  * 
  * @param buffer Pointer to encoded audio data
  * @param size Size of the audio data in bytes
- * @return 0 on success (always returns success)
+ * @return 0 on success, negative errno code on failure (e.g., -ENOBUFS if queue full)
  */
 int broadcast_audio_packets(uint8_t *buffer, size_t size)
 {
-    while (!write_to_tx_queue(buffer, size))
+    if (!write_to_tx_queue(buffer, size))
     {
-        k_sleep(K_MSEC(1));
+        // Log that the packet is being dropped because the TX queue is full
+        // This might happen if Bluetooth transmission is slow or stalled.
+        LOG_WRN("TX queue full, dropping encoded packet (%zu bytes)", size);
+        return -ENOBUFS; // Indicate buffer space issue
     }
-    return 0;
+    return 0; // Success
 }

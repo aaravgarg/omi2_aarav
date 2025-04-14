@@ -1,0 +1,26 @@
+{
+  "toolchainPath": "/opt/nordic/ncs/toolchains/b8efef2ad5",
+  "sdkPath": "/opt/nordic/ncs/v2.9.1",
+  "board": "omi_nrf5340/nrf5340/cpuapp",
+  "boardDirs": [
+    "/Users/aaravgarg/Coding/omi2_aarav/boards/omi_nrf5340/omi_nrf5340"
+  ],
+  "boardRevision": "",
+  "boardDir": "/Users/aaravgarg/Coding/omi2_aarav/boards/omi_nrf5340/omi_nrf5340",
+  "shouldBuild": true,
+  "optimizations": "none",
+  "cmakeArgs": [
+    "-DCMAKE_EXPORT_COMPILE_COMMANDS=\"YES\"",
+    "-DCMAKE_BUILD_TYPE=\"Debug\"",
+    "-DCACHED_CONF_FILE=\"/Users/aaravgarg/Coding/omi2_aarav/test/omi2.conf\""
+  ],
+  "confFiles": [
+    "omi2.conf"
+  ],
+  "buildDirectory": "build/build_OMI2_test_2",
+  "kconfigFragments": [],
+  "snippets": [],
+  "dtcOverlays": [],
+  "extraDtcOverlays": [],
+  "boardRoot": "/Users/aaravgarg/Coding/omi2_aarav"
+}

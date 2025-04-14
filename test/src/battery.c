@@ -410,7 +410,6 @@ int battery_init()
     }
 
     // Configure power pin
-    LOG_INF("Configuring power_pin...");
     ret = gpio_pin_configure_dt(&power_pin, GPIO_OUTPUT);
     if (ret) {
         LOG_ERR("power_pin config failed: %d", ret);
@@ -418,7 +417,6 @@ int battery_init()
     }
 
     // Configure battery read pin
-    LOG_INF("Configuring bat_read_pin...");
     ret = gpio_pin_configure_dt(&bat_read_pin, GPIO_INPUT);
     if (ret) {
         LOG_ERR("bat_read_pin config failed: %d", ret);
@@ -426,7 +424,6 @@ int battery_init()
     }
 
     // Configure battery charging pin
-    LOG_INF("Configuring bat_chg_pin...");
     ret = gpio_pin_configure_dt(&bat_chg_pin, GPIO_INPUT | GPIO_PULL_UP);
     if (ret) {
         LOG_ERR("bat_chg_pin config failed: %d", ret);
@@ -434,12 +431,10 @@ int battery_init()
     }
 
     // Add GPIO callback
-    LOG_INF("Adding GPIO callback...");
     gpio_init_callback(&bat_chg_cb, batt_chg_cb_handler, BIT(bat_chg_pin.pin));
     gpio_add_callback(bat_chg_pin.port, &bat_chg_cb);
 
     // Setup ADC channel    
-    LOG_INF("Setting up ADC channel...");
     ret = adc_channel_setup(adc_dev, &adc_cfg);
     if (ret) {
         LOG_ERR("ADC setup failed: %d", ret);
@@ -447,8 +442,8 @@ int battery_init()
     }
 
     // Set initialized flag
-    LOG_INF("Battery module initialized");
     is_initialized = true;
+    LOG_INF("Battery module initialized");
     return 0;
 }
 

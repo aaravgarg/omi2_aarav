@@ -28,15 +28,32 @@ uint8_t codec_ring_buffer_data[AUDIO_BUFFER_SAMPLES * 2]; // 2 bytes per sample
 struct ring_buf codec_ring_buf;
 int codec_receive_pcm(int16_t *data, size_t len) //this gets called after mic data is finished 
 {   
+    // LOG_INF("Codec receive PCM called"); // Reduce log noise
+    // LOG_INF("Codec ring buffer size: %d", ring_buf_size_get(&codec_ring_buf)); // Reduce log noise
+    // LOG_INF("Codec ring buffer data: %p", codec_ring_buffer_data); // Reduce log noise
+    // LOG_INF("Codec ring buffer data size: %d", sizeof(codec_ring_buffer_data)); // Reduce log noise
+    // LOG_INF("Codec ring buffer data length: %d", len); // Reduce log noise
+
+    size_t bytes_to_write = len * sizeof(int16_t); // Calculate bytes needed
+    size_t available_space = ring_buf_space_get(&codec_ring_buf);
+
+    if (available_space < bytes_to_write) {
+        LOG_WRN("Codec ring buffer full (%u bytes available, %u needed). Discarding PCM data.", 
+                available_space, bytes_to_write);
+        // Consider returning a specific error or 0 depending on desired behavior
+        return -ENOMEM; // Indicate memory issue (buffer full)
+    }
    
-    int written = ring_buf_put(&codec_ring_buf, (uint8_t *)data, len * 2);
-    if (written != len * 2)
+    int written = ring_buf_put(&codec_ring_buf, (uint8_t *)data, bytes_to_write);
+    if (written != bytes_to_write)
     {
-        LOG_ERR("Failed to write %d bytes to codec ring buffer", len * 2);
-        return -1;
+        // This case should technically not happen now due to the space check,
+        // but keep the error log for robustness.
+        LOG_ERR("Failed to write %zu bytes to codec ring buffer (expected %zu)", 
+                written, bytes_to_write);
+        return -1; // Generic error
     }
     
-
     return 0;
 }
 
@@ -115,8 +132,6 @@ int codec_start()
     ring_buf_init(&codec_ring_buf, sizeof(codec_ring_buffer_data), codec_ring_buffer_data);
     k_thread_create(&codec_thread, codec_stack, K_THREAD_STACK_SIZEOF(codec_stack), (k_thread_entry_t)codec_entry, NULL, NULL, NULL, K_PRIO_PREEMPT(4), 0, K_NO_WAIT);
 
-    LOG_INF("Codec started");
-
     // Success
     return 0;
 }
@@ -132,10 +147,10 @@ uint16_t execute_codec()
     opus_int32 size = opus_encode(m_opus_state, codec_input_samples, CODEC_PACKAGE_SAMPLES, codec_output_bytes, sizeof(codec_output_bytes));
     if (size < 0)
     {
-        LOG_WRN("Opus encoding failed: %d", size);
+        LOG_ERR("Opus encoding failed: %d", size);
         return 0;
     }
-    LOG_DBG("Opus encoding success: %i", size);
+    LOG_INF("Opus encoding success: %i", size);
     return size;
 }
 

@@ -1,0 +1,13 @@
+# Target labels
+ ipc_radio
+# Source files and their labels
+/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test_2/modules/nrf/CMakeFiles/ipc_radio
+/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test_2/modules/nrf/CMakeFiles/ipc_radio.rule
+/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test_2/modules/nrf/CMakeFiles/ipc_radio-complete.rule
+/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test_2/modules/nrf/ipc_radio-prefix/src/ipc_radio-stamp/ipc_radio-build.rule
+/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test_2/modules/nrf/ipc_radio-prefix/src/ipc_radio-stamp/ipc_radio-configure.rule
+/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test_2/modules/nrf/ipc_radio-prefix/src/ipc_radio-stamp/ipc_radio-download.rule
+/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test_2/modules/nrf/ipc_radio-prefix/src/ipc_radio-stamp/ipc_radio-install.rule
+/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test_2/modules/nrf/ipc_radio-prefix/src/ipc_radio-stamp/ipc_radio-mkdir.rule
+/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test_2/modules/nrf/ipc_radio-prefix/src/ipc_radio-stamp/ipc_radio-patch.rule
+/Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test_2/modules/nrf/ipc_radio-prefix/src/ipc_radio-stamp/ipc_radio-update.rule

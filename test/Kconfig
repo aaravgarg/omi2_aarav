@@ -61,4 +61,27 @@ config OMI_ENABLE_IMU
         "Enable the IMU support."
     default n
 
+config APP_LED_PIN
+    int "LED pin number"
+    default 13 # Default to LED1 on nRF5340 DK
+
+# Microphone Configuration Symbols
+config MIC_SAMPLE_RATE
+	int "Microphone Sample Rate (Hz)"
+	default 16000
+	help
+		Sample rate for the digital microphone.
+
+config MIC_THREAD_STACK_SIZE
+	int "Microphone Thread Stack Size"
+	default 1024
+	help
+		Stack size allocated for the microphone reading thread.
+
+config MIC_THREAD_PRIORITY
+	int "Microphone Thread Priority"
+	default 5
+	help
+		Priority for the microphone reading thread.
+
 endmenu

@@ -8,11 +8,13 @@
 #define NETWORK_RING_BUF_SIZE 32   // number of frames * CODEC_OUTPUT_MAX_BYTES
 #define MINIMAL_PACKET_SIZE 100    // Less than that doesn't make sence to send anything at all
 
-// PIN definitions
-// https://github.com/Seeed-Studio/Adafruit_nRF52_Arduino/blob/5aa3573913449410fd60f76b75673c53855ff2ec/variants/Seeed_XIAO_nRF52840_Sense/variant.cpp#L34
-// #define PDM_DIN_PIN NRF_GPIO_PIN_MAP(0, 16)
-// #define PDM_CLK_PIN NRF_GPIO_PIN_MAP(1, 0)
-// #define PDM_PWR_PIN NRF_GPIO_PIN_MAP(1, 10)
+// New PDM pin mappings (P1.xx = Port 1)
+#define PDM_DIN_PIN NRF_GPIO_PIN_MAP(1, 0)   // P1.00 - PDM_DATA
+#define PDM_CLK_PIN NRF_GPIO_PIN_MAP(1, 1)   // P1.01 - PDM_CLK
+#define PDM_WAKE_PIN NRF_GPIO_PIN_MAP(1, 2)  // Optional for future use
+#define PDM_EN_PIN NRF_GPIO_PIN_MAP(1, 4)    // Optional for future use
+#define PDM_THSEL_PIN NRF_GPIO_PIN_MAP(1, 5) // Optional for future use
+#define PDM_PWR_PIN NRF_GPIO_PIN_MAP(1, 4)   // Currently using EN as PWR pin
 
 // Codecs
 #ifdef CONFIG_OMI_CODEC_OPUS

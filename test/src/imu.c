@@ -83,7 +83,7 @@ static int imu_poweron(void)
 {
     int ret;
 
-    LOG_DBG("IMU power on\n");
+    LOG_INF("IMU power on\n");
     ret = gpio_pin_configure_dt(&lsm6dso_en, (GPIO_OUTPUT | NRF_GPIO_DRIVE_S0H1));
     if (ret < 0)
     {

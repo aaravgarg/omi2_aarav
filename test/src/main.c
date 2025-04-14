@@ -55,10 +55,16 @@ LOG_MODULE_REGISTER(main, CONFIG_LOG_DEFAULT_LEVEL);
  */
 static void codec_handler(uint8_t *data, size_t len)
 {
+    // LOG_INF("Codec handler called"); // Reduce log noise
+    
     int err = broadcast_audio_packets(data, len);
     if (err)
     {
-        LOG_ERR("Failed to broadcast audio packets: %d", err);
+        if (err == -ENOBUFS) {
+             LOG_WRN("TX queue full, encoded packet dropped (size %zu)", len);
+        } else {
+             LOG_ERR("Failed to broadcast audio packets: %d", err);
+        }
     }
 }
 
@@ -72,11 +78,23 @@ static void codec_handler(uint8_t *data, size_t len)
  */
 static void mic_handler(int16_t *buffer)
 {
+    // LOG_INF("Mic handler called"); // Keep this maybe? Or remove if too noisy
+
+    // Comment out the old codec processing call if still present
     int err = codec_receive_pcm(buffer, MIC_BUFFER_SAMPLES);
     if (err)
     {
         LOG_ERR("Failed to process PCM data: %d", err);
     }
+
+    // // Print all samples to the console
+    // printk("--- Mic Buffer Start ---\n");
+    // for (int i = 0; i < MIC_BUFFER_SAMPLES; i++)
+    // {
+    //     // printk("Sample %d: %d\\n", i, buffer[i]); // Option 1: Index + Value
+    //     printk("%d\n", buffer[i]); // Option 2: Just the value, simpler for copy-paste
+    // }
+    // printk("--- Mic Buffer End ---\n");
 }
 
 /**
@@ -225,7 +243,7 @@ int main(void)
     LOG_INF("Firmware revision: %s", CONFIG_BT_DIS_FW_REV_STR);
     LOG_INF("Hardware revision: %s", CONFIG_BT_DIS_HW_REV_STR);
 
-    LOG_DBG("Reset reason: %d\n", reset_reason);
+    LOG_INF("Reset reason: %d\n", reset_reason);
 
     LOG_PRINTK("\n");
     LOG_INF("Initializing LEDs...\n");
@@ -398,23 +416,25 @@ int main(void)
     set_led_red(true);
     set_led_green(true);
 
+    k_msleep(1000);
+
     // Register the callback for microphone data
     set_mic_callback(mic_handler);
-//     err = mic_start();
-//     if (err)
-//     {
-//         LOG_ERR("Failed to start microphone: %d", err);
-//         // Blink red and green LEDs to indicate microphone error
-//         for (int i = 0; i < 5; i++)
-//         {
-//             set_led_red(!gpio_pin_get_dt(&led_red));
-//             set_led_green(!gpio_pin_get_dt(&led_green));
-//             k_msleep(200);
-//         }
-//         set_led_red(false);
-//         set_led_green(false);
-//         return err;
-//     }
+    err = mic_start();
+    if (err)
+    {
+        LOG_ERR("Failed to start microphone: %d", err);
+        // Blink red and green LEDs to indicate microphone error
+        for (int i = 0; i < 5; i++)
+        {
+            set_led_red(!gpio_pin_get_dt(&led_red));
+            set_led_green(!gpio_pin_get_dt(&led_green));
+            k_msleep(200);
+        }
+        set_led_red(false);
+        set_led_green(false);
+        return err;
+    }
 
     // Turn off initialization indicator LEDs
     set_led_red(false);
@@ -424,19 +444,13 @@ int main(void)
     LOG_INF("Device initialized successfully");
 
     // Brief blue LED flash to indicate successful initialization
-    LOG_INF("Turning on blue LED");
-	k_msleep(50);
     set_led_blue(true);
 
-    LOG_INF("Sleeping 1 second");
     k_msleep(1000);
 
-    LOG_INF("Turning off blue LED");
     set_led_blue(false);
 
     LOG_INF("Entering main loop...");
-
-	bool on = false;
 
     // // Main application loop - update LED states every 500ms
     // while (1)
