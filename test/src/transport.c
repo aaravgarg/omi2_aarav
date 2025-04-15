@@ -21,6 +21,17 @@
 
 LOG_MODULE_REGISTER(transport, CONFIG_LOG_DEFAULT_LEVEL);
 
+/**
+ * Forward declarations for handler functions
+ */
+static void audio_ccc_config_changed_handler(const struct bt_gatt_attr *attr, uint16_t value);
+static ssize_t audio_data_read_characteristic(struct bt_conn *conn, const struct bt_gatt_attr *attr, void *buf, uint16_t len, uint16_t offset);
+static ssize_t audio_codec_read_characteristic(struct bt_conn *conn, const struct bt_gatt_attr *attr, void *buf, uint16_t len, uint16_t offset);
+static void dfu_ccc_config_changed_handler(const struct bt_gatt_attr *attr, uint16_t value);
+static ssize_t dfu_control_point_write_handler(struct bt_conn *conn, const struct bt_gatt_attr *attr, const void *buf, uint16_t len, uint16_t offset, uint8_t flags);
+static void test_ccc_config_changed_handler(const struct bt_gatt_attr *attr, uint16_t value);
+static ssize_t test_data_read_characteristic(struct bt_conn *conn, const struct bt_gatt_attr *attr, void *buf, uint16_t len, uint16_t offset);
+
 // Helper function to convert PHY to string
 static const char *phy2str(uint8_t phy)
 {
@@ -51,15 +62,6 @@ uint16_t current_package_index = 0; //counter for packet sequence numbering to e
 struct k_mutex write_sdcard_mutex; //mutex for protecting SD card write operations
 
 /**
- * Forward declarations for handler functions
- */
-static void audio_ccc_config_changed_handler(const struct bt_gatt_attr *attr, uint16_t value);
-static ssize_t audio_data_read_characteristic(struct bt_conn *conn, const struct bt_gatt_attr *attr, void *buf, uint16_t len, uint16_t offset);
-static ssize_t audio_codec_read_characteristic(struct bt_conn *conn, const struct bt_gatt_attr *attr, void *buf, uint16_t len, uint16_t offset);
-static void dfu_ccc_config_changed_handler(const struct bt_gatt_attr *attr, uint16_t value);
-static ssize_t dfu_control_point_write_handler(struct bt_conn *conn, const struct bt_gatt_attr *attr, const void *buf, uint16_t len, uint16_t offset, uint8_t flags);
-
-/**
  * Forward declarations for work items
  */
 extern struct k_work_delayable battery_work;
@@ -86,6 +88,11 @@ static void _transport_connected(struct bt_conn *conn, uint8_t err)
     struct bt_conn_info info = {0};
     storage_is_on = true;
 
+    if (err) {
+        LOG_ERR("Connection error: %d", err);
+        return;
+    }
+
     err = bt_conn_get_info(conn, &info);
     if (err)
     {
@@ -99,7 +106,7 @@ static void _transport_connected(struct bt_conn *conn, uint8_t err)
     //     LOG_ERR("MTU exchange failed: %d", err);
     // }
 
-    LOG_INF("bluetooth activated");
+    LOG_INF("*** BLUETOOTH CONNECTED ***");
 
     current_connection = bt_conn_ref(conn);
     current_mtu = info.le.data_len->tx_max_len;
@@ -111,6 +118,7 @@ static void _transport_connected(struct bt_conn *conn, uint8_t err)
     k_work_schedule(&battery_work, K_MSEC(100)); // run immediately
 
     is_connected = true;
+    LOG_INF("Ready to send test messages - device is now connected");
 
 #ifdef CONFIG_IMU
     // Schedule IMU data broadcasts when connected
@@ -136,7 +144,9 @@ static void _transport_disconnected(struct bt_conn *conn, uint8_t err)
     is_connected = false;
     storage_is_on = false;
 
-    LOG_INF("Transport disconnected");
+    LOG_INF("*** BLUETOOTH DISCONNECTED ***");
+    LOG_INF("Reason: %d", err);
+    
     bt_conn_unref(conn);
     current_connection = NULL;
     current_mtu = 0;
@@ -242,6 +252,7 @@ static struct bt_conn_cb _callback_references = {
  * exposes following characteristics:
  * - Audio data (UUID 19B10001-E8F2-537E-4F6C-D104768A1214) to send audio data (read/notify)
  * - Audio codec (UUID 19B10002-E8F2-537E-4F6C-D104768A1214) to send audio codec type (read)
+ * - Test data (UUID 19B10003-E8F2-537E-4F6C-D104768A1214) to send test data (read/notify)
  * TODO: The current audio service UUID seems to come from old Intel sample code,
  * we should change it to UUID 814b9b7c-25fd-4acd-8604-d28877beee6d
  */
@@ -255,6 +266,9 @@ static struct bt_uuid_128 audio_characteristic_data_uuid = BT_UUID_INIT_128(BT_U
 /** UUID for the audio format/codec characteristic (read) */
 static struct bt_uuid_128 audio_characteristic_format_uuid = BT_UUID_INIT_128(BT_UUID_128_ENCODE(0x19B10002, 0xE8F2, 0x537E, 0x4F6C, 0xD104768A1214));
 
+/** UUID for the test data characteristic (read/notify) */
+static struct bt_uuid_128 test_characteristic_data_uuid = BT_UUID_INIT_128(BT_UUID_128_ENCODE(0x19B10003, 0xE8F2, 0x537E, 0x4F6C, 0xD104768A1214));
+
 /**
  * GATT attribute table for the audio service
  * Defines the primary service and all characteristics with their properties and permissions
@@ -264,6 +278,8 @@ static struct bt_gatt_attr audio_service_attr[] = {
     BT_GATT_CHARACTERISTIC(&audio_characteristic_data_uuid.uuid, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, audio_data_read_characteristic, NULL, NULL),
     BT_GATT_CCC(audio_ccc_config_changed_handler, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
     BT_GATT_CHARACTERISTIC(&audio_characteristic_format_uuid.uuid, BT_GATT_CHRC_READ, BT_GATT_PERM_READ, audio_codec_read_characteristic, NULL, NULL),
+    BT_GATT_CHARACTERISTIC(&test_characteristic_data_uuid.uuid, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, test_data_read_characteristic, NULL, NULL),
+    BT_GATT_CCC(test_ccc_config_changed_handler, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 };
 
 /** Audio service definition combining all attributes */
@@ -330,6 +346,9 @@ static void imu_ccc_config_changed_handler(const struct bt_gatt_attr *attr, uint
  * Provides axis mode configuration information to connected clients
  */
 static ssize_t imu_data_read_characteristic(struct bt_conn *conn, const struct bt_gatt_attr *attr, void *buf, uint16_t len, uint16_t offset);
+
+/** Ring buffer instance for audio data */
+static struct ring_buf ring_buf;
 
 /**
  * GATT attribute table for the IMU service
@@ -509,25 +528,18 @@ void imu_off()
  */
 
 /**
- * Primary advertisement data containing:
- * - Flags (general discoverable, BR/EDR not supported)
- * - 128-bit UUID of the audio service
- * - Complete device name from config
+ * Primary advertisement data containing standard fields
  */
 static const struct bt_data bt_ad[] = {
     BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-    BT_DATA(BT_DATA_UUID128_ALL, audio_service_uuid.val, sizeof(audio_service_uuid.val)),
     BT_DATA(BT_DATA_NAME_COMPLETE, CONFIG_BT_DEVICE_NAME, sizeof(CONFIG_BT_DEVICE_NAME) - 1),
 };
 
 /**
- * Scan response data containing:
- * - 16-bit UUID for Device Information Service
- * - 128-bit UUID for DFU service
+ * Scan response data containing minimal information
  */
 static const struct bt_data bt_sd[] = {
     BT_DATA_BYTES(BT_DATA_UUID16_ALL, BT_UUID_16_ENCODE(BT_UUID_DIS_VAL)),
-    BT_DATA(BT_DATA_UUID128_ALL, dfu_service_uuid.val, sizeof(dfu_service_uuid.val)),
 };
 
 /**
@@ -550,11 +562,15 @@ static void audio_ccc_config_changed_handler(const struct bt_gatt_attr *attr, ui
 {
     if (value == BT_GATT_CCC_NOTIFY)
     {
-        LOG_INF("Client subscribed for notifications");
+        LOG_INF("Client subscribed for audio data notifications");
+        
+        // Reset the ring buffer whenever subscription state changes
+        ring_buf_reset(&ring_buf);
+        LOG_INF("Cleared ring buffer due to subscription change");
     }
     else if (value == 0)
     {
-        LOG_INF("Client unsubscribed from notifications");
+        LOG_INF("Client unsubscribed from audio data notifications");
     }
     else
     {
@@ -598,6 +614,39 @@ static ssize_t audio_codec_read_characteristic(struct bt_conn *conn, const struc
     uint8_t value[1] = {CODEC_ID};
     LOG_INF("audio_codec_read_characteristic %d", CODEC_ID);
     return bt_gatt_attr_read(conn, attr, buf, len, offset, value, sizeof(value));
+}
+
+/**
+ * @brief Handler for Client Characteristic Configuration changes on test data characteristic
+ */
+static void test_ccc_config_changed_handler(const struct bt_gatt_attr *attr, uint16_t value)
+{
+    if (value == BT_GATT_CCC_NOTIFY)
+    {
+        LOG_INF("Client subscribed for test data notifications");
+        
+        // Reset the ring buffer whenever subscription state changes
+        ring_buf_reset(&ring_buf);
+        LOG_INF("Cleared ring buffer due to subscription change");
+    }
+    else if (value == 0)
+    {
+        LOG_INF("Client unsubscribed from test data notifications");
+    }
+    else
+    {
+        LOG_ERR("Invalid CCC value for test data: %u", value);
+    }
+}
+
+/**
+ * @brief Handler for reads on the test data characteristic
+ */
+static ssize_t test_data_read_characteristic(struct bt_conn *conn, const struct bt_gatt_attr *attr, void *buf, uint16_t len, uint16_t offset)
+{
+    const char *value = "Test Data Read Value";
+    LOG_INF("test_data_read_characteristic");
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, value, strlen(value));
 }
 
 /**
@@ -743,9 +792,6 @@ static uint8_t tx_buffer_2[CODEC_OUTPUT_MAX_BYTES + RING_BUFFER_HEADER_SIZE];
 /** Size of data in the current tx_buffer */
 static uint32_t tx_buffer_size = 0;
 
-/** Ring buffer instance for audio data */
-static struct ring_buf ring_buf;
-
 /**
  * @brief Write audio data to the ring buffer
  * 
@@ -842,14 +888,32 @@ static bool push_to_gatt(struct bt_conn *conn)
     // Read data from ring buffer
     if (!read_from_tx_queue())
     {
-
         return false;
+    }
+
+    // Check if client is subscribed to notifications
+    bool is_subscribed = bt_gatt_is_subscribed(conn, &audio_service.attrs[1], BT_GATT_CCC_NOTIFY);
+    if (!is_subscribed) {
+        LOG_WRN("Client not subscribed to audio data notifications, dropping packet");
+        return false;
+    }
+
+    LOG_INF("Pushing data to GATT, total size: %d", tx_buffer_size);
+    
+    // For text data, we can print it out for debugging
+    if (tx_buffer_size < 100) { // Assuming it might be our text message
+        uint8_t *buffer = tx_buffer + RING_BUFFER_HEADER_SIZE;
+        char debug_buffer[100] = {0};
+        memcpy(debug_buffer, buffer, MIN(tx_buffer_size, 99));
+        LOG_INF("Text data: \"%s\"", debug_buffer);
     }
 
     // Push each frame
     uint8_t *buffer = tx_buffer + RING_BUFFER_HEADER_SIZE;
     uint32_t offset = 0;
     uint8_t index = 0;
+    uint32_t packets_sent = 0;
+    
     while (offset < tx_buffer_size)
     {
         // Recombine packet
@@ -859,12 +923,16 @@ static bool push_to_gatt(struct bt_conn *conn)
         pusher_temp_data[1] = (id >> 8) & 0xFF;
         pusher_temp_data[2] = index;
         memcpy(pusher_temp_data + NET_BUFFER_HEADER_SIZE, buffer + offset, packet_size);
-        // LOG_PRINTK("sent %d bytes \n",tx_buffer_size);
+        
+        LOG_DBG("Sending packet %d, size %d, index %d", id, packet_size, index);
 
         offset += packet_size;
         index++;
 
-        while (true)
+        int retry_count = 0;
+        const int max_retries = 3;
+        
+        while (retry_count < max_retries)
         {
             // Try send notification
             int err = bt_gatt_notify(conn, &audio_service.attrs[1], pusher_temp_data, packet_size + NET_BUFFER_HEADER_SIZE);
@@ -874,21 +942,37 @@ static bool push_to_gatt(struct bt_conn *conn)
             {
                 LOG_ERR("bt_gatt_notify failed (err %d)", err);
                 LOG_INF("MTU: %d, packet_size: %d", current_mtu, packet_size + NET_BUFFER_HEADER_SIZE);
-                k_sleep(K_MSEC(1));
+                
+                if (err == -EAGAIN || err == -ENOMEM) {
+                    retry_count++;
+                    k_sleep(K_MSEC(5));
+                    continue;
+                } else {
+                    // For other errors, break out of the retry loop
+                    break;
+                }
             }
-
-            // Try to send more data if possible
-            if (err == -EAGAIN || err == -ENOMEM)
+            else
             {
-                continue;
+                packets_sent++;
+                LOG_DBG("Notification sent successfully");
+                break; // Success - exit retry loop
             }
-
-            // Break if success
-            break;
         }
     }
 
-    return true;
+    // Check if ring buffer is getting full and clear it if needed
+    uint32_t rb_size = ring_buf_size_get(&ring_buf);
+    uint32_t rb_capacity = sizeof(tx_queue);
+    
+    if (rb_size > (rb_capacity * 3/4)) {
+        LOG_WRN("Ring buffer getting full (%u/%u bytes, %u%%), clearing older entries", 
+                rb_size, rb_capacity, (rb_size * 100) / rb_capacity);
+        ring_buf_reset(&ring_buf);
+    }
+
+    LOG_INF("Finished sending all packets (%u sent)", packets_sent);
+    return packets_sent > 0;
 }
 
 /** Size of OPUS codec packet prefix in storage */
@@ -1007,45 +1091,48 @@ void pusher(void)
         // Load current connection
         //
         struct bt_conn *conn = current_connection;
-        //updating the most recent file size is expensive!
-        static bool file_size_updated = true;
-        static bool connection_was_true = false;
-        if (conn && !connection_was_true) 
-        {
-            k_msleep(100);
-            file_size_updated = false;
-            connection_was_true = true;
-        } 
-        else if (!conn) 
-        {
-            connection_was_true = false;
-        }
-        // if (!file_size_updated) 
-        // {
-        //     LOG_PRINTK("updating file size\n");
-        //     update_file_size();
-            
-        //     file_size_updated = true;
-        // }
+        
+        // If we have a connection
         if (conn)
         {
             conn = bt_conn_ref(conn);
-        }
-        bool valid = true;
-        if (current_mtu < MINIMAL_PACKET_SIZE)
-        {
-            valid = false;
-        }
-        else if (!conn)
-        {
-            valid = false;
-        }
-        else
-        {
-            valid = bt_gatt_is_subscribed(conn, &audio_service.attrs[1], BT_GATT_CCC_NOTIFY); // Check if subscribed
+            
+            // Check if the connection is valid and the client is subscribed to notifications
+            bool valid = true;
+            
+            if (current_mtu < MINIMAL_PACKET_SIZE)
+            {
+                valid = false;
+                LOG_DBG("MTU too small: %d", current_mtu);
+            }
+            else if (!conn)
+            {
+                valid = false;
+                LOG_DBG("No connection");
+            }
+            else if (!bt_gatt_is_subscribed(conn, &audio_service.attrs[1], BT_GATT_CCC_NOTIFY))
+            {
+                // Not subscribed to audio notifications
+                valid = false;
+                LOG_DBG("Client not subscribed to audio notifications");
+            }
+            
+            // If everything is valid, push to GATT
+            if (valid)
+            {
+                bool sent = push_to_gatt(conn);
+                if (!sent)
+                {
+                    k_sleep(K_MSEC(10)); // Short sleep if nothing was sent
+                }
+            }
+            
+            // Release the connection
+            bt_conn_unref(conn);
         }
         
-        if (!valid  && !storage_is_on) 
+        // If we're not connected but storage is enabled
+        else if (!storage_is_on) 
         {
             bool result = false;
             if (file_num_array[1] < MAX_STORAGE_BYTES)
@@ -1057,34 +1144,20 @@ void pusher(void)
                 }
                 k_mutex_unlock(&write_sdcard_mutex);
             }
+            
             if (result)
             {
-             heartbeat_count++;
-             if (heartbeat_count == 255)
-             {
-                update_file_size();
-                heartbeat_count = 0;
-                LOG_PRINTK("drawing\n");
-             }
-            }
-            else 
-            {
-    
+                heartbeat_count++;
+                if (heartbeat_count == 255)
+                {
+                    update_file_size();
+                    heartbeat_count = 0;
+                    LOG_PRINTK("drawing\n");
+                }
             }
         }    
-        if (valid)
-        {
-            bool sent = push_to_gatt(conn);
-            if (!sent)
-            {
-                // k_sleep(K_MSEC(50));
-            }
-        }
-        if (conn)
-        {
-            bt_conn_unref(conn);
-        }
-
+        
+        // Yield to other tasks
         k_yield();
     }
 }
@@ -1196,12 +1269,14 @@ int transport_start()
 #endif
 
     // Start advertising
-
     memset(storage_temp_data, 0, OPUS_PADDED_LENGTH * 4);
     bt_gatt_service_register(&storage_service);
     bt_gatt_service_register(&audio_service);
     bt_gatt_service_register(&dfu_service);
+    
+    // Use standard advertising parameters instead of custom ones that might be causing the error
     err = bt_le_adv_start(BT_LE_ADV_CONN, bt_ad, ARRAY_SIZE(bt_ad), bt_sd, ARRAY_SIZE(bt_sd));
+    
     if (err)
     {
         LOG_ERR("Transport advertising failed to start (err %d)", err);
@@ -1209,7 +1284,8 @@ int transport_start()
     }
     else
     {
-        LOG_INF("Advertising successfully started");
+        LOG_INF("Advertising successfully started - DEVICE READY FOR CONNECTION");
+        LOG_INF("Device name: %s", CONFIG_BT_DEVICE_NAME);
     }
 
     int battErr = 0;
@@ -1256,12 +1332,93 @@ struct bt_conn *get_current_connection()
  */
 int broadcast_audio_packets(uint8_t *buffer, size_t size)
 {
-    if (!write_to_tx_queue(buffer, size))
-    {
-        // Log that the packet is being dropped because the TX queue is full
-        // This might happen if Bluetooth transmission is slow or stalled.
-        LOG_WRN("TX queue full, dropping encoded packet (%zu bytes)", size);
-        return -ENOBUFS; // Indicate buffer space issue
+    LOG_INF("Broadcasting packet: size=%d, data=\"%s\"", size, buffer);
+    
+    // Try to write to the queue with retries
+    int max_retries = 3;
+    for (int retry = 0; retry < max_retries; retry++) {
+        if (write_to_tx_queue(buffer, size)) {
+            LOG_DBG("Successfully queued packet for transmission");
+            return 0; // Success
+        }
+        
+        // If queue is full, check if we should try clearing it
+        if (retry < max_retries - 1) {
+            LOG_WRN("TX queue full, attempt %d - clearing and retrying", retry + 1);
+            ring_buf_reset(&ring_buf);
+            k_sleep(K_MSEC(10)); // Brief pause before retry
+        }
     }
-    return 0; // Success
+    
+    // If all retries failed, log the error and return
+    LOG_WRN("TX queue full after %d retries, dropping encoded packet (%zu bytes)", 
+            max_retries, size);
+    return -ENOBUFS; // Indicate buffer space issue
+}
+
+/**
+ * @brief Send test message directly over Bluetooth
+ * 
+ * Sends a test message via the test data characteristic. This function
+ * bypasses the ring buffer mechanism for simpler debugging.
+ * 
+ * @param message Pointer to the message string
+ * @param length Length of the message
+ * @return 0 on success, negative error code on failure
+ */
+int send_test_message(const char *message, size_t length)
+{
+    if (!current_connection) {
+        LOG_WRN("No active connection to send test message");
+        return -ENOTCONN;
+    }
+    
+    LOG_INF("Sending direct test message: \"%s\"", message);
+
+    // Since we may not have a reliable attr_count, calculate based on array size
+    const int attr_count = sizeof(audio_service_attr) / sizeof(struct bt_gatt_attr);
+    
+    // Find the test characteristic attribute index
+    // Going through all attributes in the service to locate the test characteristic
+    int test_char_idx = -1;
+    for (int i = 0; i < attr_count; i++) {
+        if (audio_service_attr[i].uuid == &test_characteristic_data_uuid.uuid) {
+            test_char_idx = i;
+            LOG_INF("Found test characteristic at index %d", i);
+            break;
+        }
+    }
+    
+    if (test_char_idx < 0) {
+        LOG_ERR("Could not find test characteristic in service");
+        test_char_idx = 4; // Fallback to our previous guess
+    }
+    
+    // First check if client is subscribed to the test characteristic
+    bool test_subscribed = bt_gatt_is_subscribed(current_connection, &audio_service.attrs[test_char_idx], BT_GATT_CCC_NOTIFY);
+    
+    if (test_subscribed) {
+        // Try sending directly to the test characteristic
+        int err = bt_gatt_notify(current_connection, &audio_service.attrs[test_char_idx], message, length);
+        
+        if (err) {
+            LOG_ERR("Failed to send test message notification to test characteristic: %d", err);
+        } else {
+            LOG_DBG("Successfully sent notification to test characteristic");
+            return 0;
+        }
+    } else {
+        LOG_WRN("Client not subscribed to test characteristic (index %d)", test_char_idx);
+    }
+    
+    // Check if subscribed to audio data characteristic as fallback
+    bool audio_subscribed = bt_gatt_is_subscribed(current_connection, &audio_service.attrs[1], BT_GATT_CCC_NOTIFY);
+    
+    if (audio_subscribed) {
+        LOG_INF("Using audio data characteristic as fallback");
+        return broadcast_audio_packets((uint8_t*)message, length);
+    } else {
+        LOG_WRN("Client not subscribed to audio characteristic either");
+        return -ENOTCONN;
+    }
 }

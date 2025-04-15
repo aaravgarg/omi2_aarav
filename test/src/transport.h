@@ -51,6 +51,18 @@ int transport_start();
 int broadcast_audio_packets(uint8_t *buffer, size_t size);
 
 /**
+ * @brief Send test message directly over Bluetooth
+ * 
+ * Sends a test message via the test data characteristic. This function
+ * bypasses the audio data pipeline for simpler debugging.
+ * 
+ * @param message Pointer to the message string
+ * @param length Length of the message
+ * @return 0 on success, negative error code on failure
+ */
+int send_test_message(const char *message, size_t length);
+
+/**
  * @brief Get the current active Bluetooth connection
  * 
  * Returns a pointer to the currently established Bluetooth connection,

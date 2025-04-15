@@ -90,7 +90,7 @@ CMAKE_SKIP_RPATH:BOOL=NO
 CMAKE_VERBOSE_MAKEFILE:BOOL=FALSE
 
 //No help, variable specified on the command line.
-CONF_FILE:UNINITIALIZED=/Users/aaravgarg/Coding/omi2_aarav/test/omi2.conf
+CONF_FILE:UNINITIALIZED=omi2.conf
 
 //No help, variable specified on the command line.
 NCS_TOOLCHAIN_VERSION:UNINITIALIZED=NONE

@@ -34,7 +34,7 @@ cmake:
      - /Users/aaravgarg/Coding/omi2_aarav/test/omi2.conf
      - /Users/aaravgarg/Coding/omi2_aarav/test/build/build_OMI2_test_2/test/zephyr/.config.sysbuild
     user-files:
-     - /Users/aaravgarg/Coding/omi2_aarav/test/omi2.conf
+     - omi2.conf
   toolchain:
     name: zephyr
     path: /opt/nordic/ncs/toolchains/b8efef2ad5/opt/zephyr-sdk

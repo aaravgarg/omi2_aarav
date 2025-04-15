@@ -310,7 +310,7 @@ CMAKE_VERBOSE_MAKEFILE:BOOL=FALSE
 // listed, e.g. CONF_FILE="prj1.conf;prj2.conf" The CACHED_CONF_FILE
 // is internal Zephyr variable used between CMake runs. To change
 // CONF_FILE, use the CONF_FILE variable.
-CONF_FILE:STRING=/Users/aaravgarg/Coding/omi2_aarav/test/omi2.conf
+CONF_FILE:STRING=omi2.conf
 
 //Path to a program.
 DTC:FILEPATH=/opt/nordic/ncs/toolchains/b8efef2ad5/bin/dtc

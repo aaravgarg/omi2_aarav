@@ -10,6 +10,8 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>  /* Replace nrf_power.h with gpio.h */
+#include <string.h>               /* For strlen and related functions */
+#include <stdio.h>                /* For snprintf */
 #include "transport.h"     /* Bluetooth communication module */
 #include "mic.h"           /* Microphone interface */
 #include "utils.h"         /* Utility functions */
@@ -53,6 +55,7 @@ LOG_MODULE_REGISTER(main, CONFIG_LOG_DEFAULT_LEVEL);
  * @param data Pointer to encoded audio data
  * @param len Length of the encoded data in bytes
  */
+/* 
 static void codec_handler(uint8_t *data, size_t len)
 {
     // LOG_INF("Codec handler called"); // Reduce log noise
@@ -67,6 +70,7 @@ static void codec_handler(uint8_t *data, size_t len)
         }
     }
 }
+*/
 
 /**
  * @brief Callback function for handling microphone PCM data
@@ -76,6 +80,7 @@ static void codec_handler(uint8_t *data, size_t len)
  * 
  * @param buffer Pointer to buffer containing PCM audio samples
  */
+/*
 static void mic_handler(int16_t *buffer)
 {
     // LOG_INF("Mic handler called"); // Keep this maybe? Or remove if too noisy
@@ -96,6 +101,7 @@ static void mic_handler(int16_t *buffer)
     // }
     // printk("--- Mic Buffer End ---\n");
 }
+*/
 
 /**
  * @brief Handler for Bluetooth controller assertions
@@ -206,13 +212,46 @@ void set_led_state()
     }
 }
 
+// Define a test message to send over Bluetooth
+#define TEST_MESSAGE "Hello from Omi!"
+#define TEST_MESSAGE_INTERVAL_MS 1000
+
+//Main loop thread
 void main_loop_thread(void)
 {
+    uint8_t count = 0;
+    uint8_t test_buffer[32];
+    bool transport_error_shown = false;
+    
+    // Wait a bit to make sure everything is initialized
+    k_msleep(2000);
+    
     while (1)
     {
-        // LOG_INF("Main loop heartbeat");
-        set_led_state(); // Uncomment this if you want status LED to update
-        k_msleep(500);
+        // Update LED state
+        set_led_state();
+        
+        // Only send data if connected to Bluetooth
+        if (is_connected) {
+            // Format a test message with a counter
+            snprintf(test_buffer, sizeof(test_buffer), "%s %u", TEST_MESSAGE, count++);
+            LOG_INF("Sending test data: %s", test_buffer);
+            
+            // Use only one method to avoid duplicate messages
+            // Method: Using the direct test message function which uses broadcast_audio_packets internally
+            int err = send_test_message(test_buffer, strlen(test_buffer) + 1);
+            if (err) {
+                LOG_ERR("Failed to send test message: %d", err);
+            }
+        } else {
+            // Only show waiting message if transport is actually working
+            if (!transport_error_shown) {
+                LOG_INF("Waiting for Bluetooth connection...");
+            }
+        }
+        
+        // Sleep for the defined interval
+        k_msleep(TEST_MESSAGE_INTERVAL_MS);
     }
 }
 
@@ -373,17 +412,16 @@ int main(void)
     if (transportErr)
     {
         LOG_ERR("Failed to start transport (err %d)", transportErr);
-        // TODO: Detect the current core is app core or net core
-        // // Blink green LED to indicate error
-        // for (int i = 0; i < 5; i++)
-        // {
-        //     set_led_green(!gpio_pin_get_dt(&led_green));
-        //     k_msleep(200);
-        // }
-        // set_led_green(false);
-        return transportErr;
+        // Note: we continue execution even in case of transport failure
+        // to allow the main loop to run for debugging
+    }
+    else
+    {
+        LOG_INF("Transport started successfully");
     }
 
+    /* COMMENT OUT MIC AND CODEC INITIALIZATION */
+    /*
     // Initialize audio codec (Opus)
     LOG_PRINTK("\n");
     LOG_INF("Initializing codec...\n");
@@ -435,6 +473,7 @@ int main(void)
         set_led_green(false);
         return err;
     }
+    */
 
     // Turn off initialization indicator LEDs
     set_led_red(false);
@@ -445,29 +484,10 @@ int main(void)
 
     // Brief blue LED flash to indicate successful initialization
     set_led_blue(true);
-
     k_msleep(1000);
-
     set_led_blue(false);
 
     LOG_INF("Entering main loop...");
 
-    // // Main application loop - update LED states every 500ms
-    // while (1)
-    // {
-
-    //     LOG_INF("Main loop heartbeat1");
-	// 	// set_led_state();
-	// 	k_msleep(500);
-
-	// 	LOG_PRINTK("Main loop heartbeat2");
-	// 	printk("Main loop heartbeat3");
-
-	// 	on = !on;
-    //     set_led_blue(on);
-    
-    // }
-
-    // This code is never reached but included for completeness
     return 0;
 }
