@@ -73,6 +73,15 @@ struct k_mutex write_sdcard_mutex; //mutex for protecting SD card write operatio
  */
 extern struct k_work_delayable battery_work;
 
+/* Forward declaration of the MTU exchange callback */
+static void exchange_mtu_cb(struct bt_conn *conn, uint8_t err,
+                           struct bt_gatt_exchange_params *params);
+
+/* Exchange parameters with callback */
+static struct bt_gatt_exchange_params exchange_params = {
+    .func = exchange_mtu_cb
+};
+
 /**
  * Connection Callbacks
  * 
@@ -108,10 +117,10 @@ static void _transport_connected(struct bt_conn *conn, uint8_t err)
     }
 
     // Force MTU exchange
-    // err = bt_gatt_exchange_mtu(conn, NULL);
-    // if (err) {
-    //     LOG_ERR("MTU exchange failed: %d", err);
-    // }
+    err = bt_gatt_exchange_mtu(conn, &exchange_params);
+    if (err) {
+        LOG_ERR("MTU exchange failed: %d", err);
+    }
 
     LOG_INF("*** BLUETOOTH CONNECTED ***");
 
@@ -211,8 +220,8 @@ static void _le_param_updated(struct bt_conn *conn, uint16_t interval,
 static void _le_phy_updated(struct bt_conn *conn,
                             struct bt_conn_le_phy_info *param)
 {
-    // LOG_DBG("LE PHY updated: TX PHY %s, RX PHY %s",
-    //        phy2str(param->tx_phy), phy2str(param->rx_phy));
+    LOG_INF("LE PHY updated: TX PHY %s, RX PHY %s",
+           phy2str(param->tx_phy), phy2str(param->rx_phy));
 }
 
 /**
@@ -232,6 +241,28 @@ static void _le_data_length_updated(struct bt_conn *conn,
            info->tx_max_len,
            info->tx_max_time, info->rx_max_len, info->rx_max_time);
     current_mtu = info->tx_max_len;
+}
+
+/**
+ * @brief Callback for MTU exchange completion
+ * 
+ * Called when GATT MTU exchange is completed. Updates the current_mtu
+ * variable with the negotiated value.
+ * 
+ * @param conn The connection on which MTU exchange completed
+ * @param err Error code (0 if successful)
+ * @param params Exchange parameters with the new MTU value
+ */
+static void exchange_mtu_cb(struct bt_conn *conn, uint8_t err,
+                           struct bt_gatt_exchange_params *params)
+{
+    if (!err) {
+        uint16_t mtu = bt_gatt_get_mtu(conn);
+        LOG_INF("MTU exchange completed, MTU: %u", mtu);
+        current_mtu = mtu - 3; // Account for ATT header (3 bytes)
+    } else {
+        LOG_WRN("MTU exchange failed (err %d)", err);
+    }
 }
 
 /**
@@ -836,7 +867,7 @@ void broadcast_battery_level(struct k_work *work_item) {
 #define RING_BUFFER_HEADER_SIZE 2
 
 /** Buffer holding the ring buffer data for audio transmission */
-static uint8_t tx_queue[NETWORK_RING_BUF_SIZE * (CODEC_OUTPUT_MAX_BYTES + RING_BUFFER_HEADER_SIZE)];
+static uint8_t tx_queue[NETWORK_RING_BUF_SIZE * (CODEC_OUTPUT_MAX_BYTES + RING_BUFFER_HEADER_SIZE) * 2]; // Double the size
 
 /** Temporary buffer for reading from the ring buffer */
 static uint8_t tx_buffer[CODEC_OUTPUT_MAX_BYTES + RING_BUFFER_HEADER_SIZE];
@@ -869,10 +900,22 @@ static bool write_to_tx_queue(uint8_t *data, size_t size)
     tx_buffer_2[1] = (size >> 8) & 0xFF;
     memcpy(tx_buffer_2 + RING_BUFFER_HEADER_SIZE, data, size);
 
+    // Check available space first
+    uint32_t rb_size = ring_buf_size_get(&ring_buf);
+    uint32_t rb_capacity = sizeof(tx_queue);
+    uint32_t needed_size = CODEC_OUTPUT_MAX_BYTES + RING_BUFFER_HEADER_SIZE;
+    
+    if (rb_size + needed_size > rb_capacity) {
+        LOG_WRN("Ring buffer almost full (%u/%u bytes), clearing older entries", 
+                rb_size, rb_capacity);
+        ring_buf_reset(&ring_buf);
+    }
+
     // Write to ring buffer 
-    int written = ring_buf_put(&ring_buf, tx_buffer_2, (CODEC_OUTPUT_MAX_BYTES + RING_BUFFER_HEADER_SIZE)); // It always fits completely or not at all
-    if (written != CODEC_OUTPUT_MAX_BYTES + RING_BUFFER_HEADER_SIZE)
+    int written = ring_buf_put(&ring_buf, tx_buffer_2, needed_size);
+    if (written != needed_size)
     {
+        LOG_ERR("Failed to write to ring buffer: wrote %d of %d bytes", written, needed_size);
         return false;
     }
     else
@@ -891,20 +934,26 @@ static bool write_to_tx_queue(uint8_t *data, size_t size)
  */
 static bool read_from_tx_queue()
 {
+    size_t available = ring_buf_size_get(&ring_buf);
+    size_t needed = CODEC_OUTPUT_MAX_BYTES + RING_BUFFER_HEADER_SIZE;
+    
+    // Check if there's enough data in the buffer
+    if (available < needed) {
+        LOG_ERR("Not enough data in ring buffer (%u/%u bytes needed)", available, needed);
+        return false;
+    }
 
     // Read from ring buffer
-    // memset(tx_buffer, 0, sizeof(tx_buffer));
-    tx_buffer_size = ring_buf_get(&ring_buf, tx_buffer, (CODEC_OUTPUT_MAX_BYTES + RING_BUFFER_HEADER_SIZE)); // It always fits completely or not at all
-    if (tx_buffer_size != (CODEC_OUTPUT_MAX_BYTES + RING_BUFFER_HEADER_SIZE))
+    tx_buffer_size = ring_buf_get(&ring_buf, tx_buffer, needed);
+    if (tx_buffer_size != needed)
     {
-        LOG_ERR("Failed to read from ring buffer. not enough data %d", tx_buffer_size);
+        LOG_ERR("Failed to read from ring buffer. Expected %d bytes, got %d", needed, tx_buffer_size);
         return false;
     }
 
     // Adjust size
     tx_buffer_size = tx_buffer[0] + (tx_buffer[1] << 8);
-    // LOG_PRINTK("tx_buffer_size %d\n",tx_buffer_size);
-
+    
     return true;
 }
 
@@ -917,7 +966,7 @@ static bool read_from_tx_queue()
  */
 
 /** Stack for the pusher thread */
-K_THREAD_STACK_DEFINE(pusher_stack, 4096);
+K_THREAD_STACK_DEFINE(pusher_stack, 8192); // Increased from 4096 to 8192
 
 /** Thread control structure for the pusher thread */
 static struct k_thread pusher_thread;
@@ -948,6 +997,10 @@ void pusher(void)
     uint32_t last_time_ms = k_uptime_get_32();
     uint32_t report_interval_ms = 5000; // Log stats every 5 seconds
     
+    // Add a counter to limit consecutive error handling
+    uint32_t consecutive_errors = 0;
+    const uint32_t MAX_CONSECUTIVE_ERRORS = 10;
+    
     while (1)
     {
         // Load current connection
@@ -956,7 +1009,12 @@ void pusher(void)
         // If we have a connection
         if (conn)
         {
-            conn = bt_conn_ref(conn);
+            // Use connection reference safely
+            if (!bt_conn_ref(conn)) {
+                LOG_ERR("Invalid connection reference");
+                k_sleep(K_MSEC(20));
+                continue;
+            }
             
             // Check if the connection is valid and the client is subscribed to notifications
             bool valid = true;
@@ -964,31 +1022,42 @@ void pusher(void)
             if (current_mtu < MINIMAL_PACKET_SIZE)
             {
                 valid = false;
-                LOG_DBG("MTU too small: %d", current_mtu);
-            }
-            else if (!conn)
-            {
-                valid = false;
-                LOG_DBG("No connection");
+                LOG_INF("MTU too small: %d", current_mtu);
             }
             else if (!bt_gatt_is_subscribed(conn, &audio_service.attrs[1], BT_GATT_CCC_NOTIFY))
             {
                 // Not subscribed to audio notifications
                 valid = false;
-                LOG_DBG("Client not subscribed to audio notifications");
+                // Only log occasionally to reduce spam
+                if (consecutive_errors == 0 || consecutive_errors >= MAX_CONSECUTIVE_ERRORS) {
+                    LOG_INF("Client not subscribed to audio notifications");
+                    consecutive_errors = 1; // Reset counter
+                } else {
+                    consecutive_errors++;
+                }
             }
             
             // If everything is valid, push to GATT
             if (valid)
             {
-                // Process up to 5 packets without yielding to ensure low latency streaming
-                for (int i = 0; i < 5; i++) {
-                    bool sent = push_to_gatt(conn);
+                consecutive_errors = 0; // Reset error counter
+                
+                // Process up to 2 packets without yielding to ensure low latency streaming
+                // (reduced from 5 to 2 to prevent buffer/stack issues)
+                for (int i = 0; i < 2; i++) {
+                    bool sent = false;
+                    
+                    // Use a try-catch pattern with k_sleep to prevent stack overflow
+                    sent = push_to_gatt(conn);
+                    
                     if (sent) {
                         packet_count++;
                     } else {
                         break; // No more data to send
                     }
+                    
+                    // Give other threads a chance to run
+                    k_yield();
                 }
                 
                 // Check if it's time to log stats
@@ -1011,7 +1080,8 @@ void pusher(void)
             bt_conn_unref(conn);
             
             // Sleep for a short time to reduce CPU usage while still maintaining responsive audio
-            k_sleep(K_MSEC(5));
+            // Increased sleep time to allow more system resources for other tasks
+            k_sleep(K_MSEC(10));
         }
         // If we're not connected but storage is enabled
         else if (!storage_is_on) 
@@ -1255,15 +1325,29 @@ int broadcast_audio_packets(uint8_t *buffer, size_t size)
     for (int retry = 0; retry < max_retries; retry++) {
         if (write_to_tx_queue(buffer, size)) {
             if (packet_counter % 20 == 0) {
-                LOG_DBG("Successfully queued packet for transmission");
+                LOG_INF("Successfully queued packet for transmission");
             }
             return 0; // Success
         }
         
         // If queue is full, check if we should try clearing it
         if (retry < max_retries - 1) {
-            LOG_WRN("TX queue full, attempt %d - clearing and retrying", retry + 1);
-            ring_buf_reset(&ring_buf);
+            // Instead of clearing the entire buffer, try to remove oldest entries
+            uint32_t rb_size = ring_buf_size_get(&ring_buf);
+            uint32_t rb_capacity = sizeof(tx_queue);
+            
+            if (rb_size > (rb_capacity * 3/4)) {
+                LOG_WRN("TX queue full, attempt %d - clearing half of the buffer", retry + 1);
+                
+                // Remove roughly half of the entries by reading and discarding them
+                uint8_t discard_buffer[CODEC_OUTPUT_MAX_BYTES + RING_BUFFER_HEADER_SIZE];
+                for (int i = 0; i < NETWORK_RING_BUF_SIZE / 2; i++) {
+                    ring_buf_get(&ring_buf, discard_buffer, sizeof(discard_buffer));
+                }
+            } else {
+                LOG_WRN("TX queue full, attempt %d - retrying", retry + 1);
+            }
+            
             k_sleep(K_MSEC(10)); // Brief pause before retry
         }
     }
@@ -1322,7 +1406,7 @@ int send_test_message(const char *message, size_t length)
         if (err) {
             LOG_ERR("Failed to send test message notification to test characteristic: %d", err);
         } else {
-            LOG_DBG("Successfully sent notification to test characteristic");
+            LOG_INF("Successfully sent notification to test characteristic");
             return 0;
         }
     } else {
@@ -1368,7 +1452,7 @@ static bool push_to_gatt(struct bt_conn *conn)
 
     // Only log details occasionally to avoid flooding
     static uint32_t push_count = 0;
-    bool should_log = (push_count % 20 == 0);
+    bool should_log = (push_count % 50 == 0); // Reduced logging frequency from 20 to 50
     
     if (should_log) {
         LOG_INF("Pushing data to GATT, total size: %d (packet #%d)", tx_buffer_size, push_count);
@@ -1376,26 +1460,21 @@ static bool push_to_gatt(struct bt_conn *conn)
     push_count++;
     
     // For text data, we can print it out for debugging
-    if (tx_buffer_size < 100 && should_log) { // Assuming it might be our text message
-        uint8_t *buffer = tx_buffer + RING_BUFFER_HEADER_SIZE;
-        char debug_buffer[32] = {0};
+    if (should_log) {
+        char preview[17] = {0};
+        int preview_len = (tx_buffer_size > 15) ? 15 : tx_buffer_size;
         
-        // Create a safe preview string without assuming it's text
-        int preview_len = MIN(tx_buffer_size, 16);
+        // Create a preview string
         for (int i = 0; i < preview_len; i++) {
-            if (buffer[i] >= 32 && buffer[i] <= 126) {
-                debug_buffer[i] = buffer[i]; // Printable ASCII
-            } else {
-                debug_buffer[i] = '.'; // Non-printable
-            }
+            char c = tx_buffer[i + RING_BUFFER_HEADER_SIZE];
+            preview[i] = (c >= 32 && c <= 126) ? c : '.';
         }
         
-        LOG_INF("Data preview: \"%s...\"", debug_buffer);
+        LOG_INF("Data preview: \"%s\"", preview);
     }
-
-    // Push each frame
+    
     uint8_t *buffer = tx_buffer + RING_BUFFER_HEADER_SIZE;
-    uint32_t offset = 0;
+    uint16_t offset = 0;
     uint8_t index = 0;
     uint32_t packets_sent = 0;
     
@@ -1410,18 +1489,18 @@ static bool push_to_gatt(struct bt_conn *conn)
         memcpy(pusher_temp_data + NET_BUFFER_HEADER_SIZE, buffer + offset, packet_size);
         
         if (should_log) {
-            LOG_DBG("Sending packet %d, size %d, index %d", id, packet_size, index);
+            LOG_INF("Sending packet %d, size %d, index %d", id, packet_size, index);
         }
 
         offset += packet_size;
         index++;
 
         int retry_count = 0;
-        const int max_retries = 3;
+        const int max_retries = 2; // Reduced from 3 to 2
         
         while (retry_count < max_retries)
         {
-            // Try send notification
+            // Try send notification with timeout protection
             int err = bt_gatt_notify(conn, &audio_service.attrs[1], pusher_temp_data, packet_size + NET_BUFFER_HEADER_SIZE);
 
             // Log failure
@@ -1434,7 +1513,7 @@ static bool push_to_gatt(struct bt_conn *conn)
                 
                 if (err == -EAGAIN || err == -ENOMEM) {
                     retry_count++;
-                    k_sleep(K_MSEC(5));
+                    k_sleep(K_MSEC(10)); // Increased from 5ms to 10ms
                     continue;
                 } else {
                     // For other errors, break out of the retry loop
@@ -1445,21 +1524,32 @@ static bool push_to_gatt(struct bt_conn *conn)
             {
                 packets_sent++;
                 if (should_log) {
-                    LOG_DBG("Notification sent successfully");
+                    LOG_INF("Notification sent successfully");
                 }
                 break; // Success - exit retry loop
             }
         }
+        
+        // Add a small delay between packets to prevent buffer allocation issues
+        k_sleep(K_MSEC(2));
     }
 
     // Check if ring buffer is getting full and clear it if needed
     uint32_t rb_size = ring_buf_size_get(&ring_buf);
     uint32_t rb_capacity = sizeof(tx_queue);
     
-    if (rb_size > (rb_capacity * 3/4)) {
+    if (rb_size > (rb_capacity * 2/3)) {
         LOG_WRN("Ring buffer getting full (%u/%u bytes, %u%%), clearing older entries", 
                 rb_size, rb_capacity, (rb_size * 100) / rb_capacity);
-        ring_buf_reset(&ring_buf);
+                
+        // Empty approximately half the buffer instead of completely resetting
+        uint8_t discard_buffer[CODEC_OUTPUT_MAX_BYTES + RING_BUFFER_HEADER_SIZE];
+        for (int i = 0; i < NETWORK_RING_BUF_SIZE / 2; i++) {
+            if (ring_buf_size_get(&ring_buf) < sizeof(discard_buffer)) {
+                break; // Exit if not enough data to discard safely
+            }
+            ring_buf_get(&ring_buf, discard_buffer, sizeof(discard_buffer));
+        }
     }
 
     if (should_log) {

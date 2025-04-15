@@ -6,7 +6,7 @@
 #define MIC_BUFFER_SAMPLES 1600    // 100ms
 #define AUDIO_BUFFER_SAMPLES 16000 // 1s
 #define NETWORK_RING_BUF_SIZE 32   // number of frames * CODEC_OUTPUT_MAX_BYTES
-#define MINIMAL_PACKET_SIZE 100    // Less than that doesn't make sence to send anything at all
+#define MINIMAL_PACKET_SIZE 27     // Lowered from 100 to match minimum BLE MTU
 
 // New PDM pin mappings (P1.xx = Port 1)
 #define PDM_DIN_PIN NRF_GPIO_PIN_MAP(1, 0)   // P1.00 - PDM_DATA

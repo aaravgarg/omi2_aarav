@@ -105,7 +105,7 @@ static void mic_read_thread(void *p1, void *p2, void *p3)
             continue;
         }
 
-        LOG_DBG("Read %u bytes", size);
+        LOG_INF("Read %u bytes", size);
 
         // Stop capture after reading the block
         // Consider DMIC_TRIGGER_PAUSE if continuous capture is desired
@@ -234,7 +234,7 @@ void mic_off()
 	ret = gpio_pin_set_dt(&mic_en, 0);
     if (ret < 0) LOG_ERR("Failed set en (%d)", ret);
 
-    LOG_DBG("Mic powered off");
+    LOG_INF("Mic powered off");
 }
 
 
@@ -257,5 +257,5 @@ void mic_on()
 
     // Small delay for power stabilization (optional, adjust if needed)
     k_sleep(K_MSEC(5));
-    LOG_DBG("Mic powered on");
+    LOG_INF("Mic powered on");
 }
