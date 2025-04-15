@@ -144,13 +144,21 @@ int codec_start()
 
 uint16_t execute_codec()
 {
+    static uint32_t encode_count = 0;
+    
     opus_int32 size = opus_encode(m_opus_state, codec_input_samples, CODEC_PACKAGE_SAMPLES, codec_output_bytes, sizeof(codec_output_bytes));
     if (size < 0)
     {
         LOG_ERR("Opus encoding failed: %d", size);
         return 0;
     }
-    LOG_INF("Opus encoding success: %i", size);
+    
+    // Only log occasional success to reduce console spam
+    if (encode_count % 20 == 0) {
+        LOG_INF("Opus encoding success: %i (packet #%d)", size, encode_count);
+    }
+    encode_count++;
+    
     return size;
 }
 

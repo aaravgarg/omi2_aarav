@@ -21,6 +21,12 @@
 
 LOG_MODULE_REGISTER(transport, CONFIG_LOG_DEFAULT_LEVEL);
 
+// Forward declarations
+static bool push_to_gatt(struct bt_conn *conn);
+bool write_to_storage(void);
+void update_file_size(void);
+extern void set_test_mode(bool enable_test_mode);
+
 /**
  * Forward declarations for handler functions
  */
@@ -31,6 +37,7 @@ static void dfu_ccc_config_changed_handler(const struct bt_gatt_attr *attr, uint
 static ssize_t dfu_control_point_write_handler(struct bt_conn *conn, const struct bt_gatt_attr *attr, const void *buf, uint16_t len, uint16_t offset, uint8_t flags);
 static void test_ccc_config_changed_handler(const struct bt_gatt_attr *attr, uint16_t value);
 static ssize_t test_data_read_characteristic(struct bt_conn *conn, const struct bt_gatt_attr *attr, void *buf, uint16_t len, uint16_t offset);
+static ssize_t test_data_write_handler(struct bt_conn *conn, const struct bt_gatt_attr *attr, const void *buf, uint16_t len, uint16_t offset, uint8_t flags);
 
 // Helper function to convert PHY to string
 static const char *phy2str(uint8_t phy)
@@ -278,7 +285,7 @@ static struct bt_gatt_attr audio_service_attr[] = {
     BT_GATT_CHARACTERISTIC(&audio_characteristic_data_uuid.uuid, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, audio_data_read_characteristic, NULL, NULL),
     BT_GATT_CCC(audio_ccc_config_changed_handler, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
     BT_GATT_CHARACTERISTIC(&audio_characteristic_format_uuid.uuid, BT_GATT_CHRC_READ, BT_GATT_PERM_READ, audio_codec_read_characteristic, NULL, NULL),
-    BT_GATT_CHARACTERISTIC(&test_characteristic_data_uuid.uuid, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, test_data_read_characteristic, NULL, NULL),
+    BT_GATT_CHARACTERISTIC(&test_characteristic_data_uuid.uuid, BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE, test_data_read_characteristic, test_data_write_handler, NULL),
     BT_GATT_CCC(test_ccc_config_changed_handler, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 };
 
@@ -532,6 +539,7 @@ void imu_off()
  */
 static const struct bt_data bt_ad[] = {
     BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+    BT_DATA(BT_DATA_UUID128_ALL, audio_service_uuid.val, sizeof(audio_service_uuid.val)),
     BT_DATA(BT_DATA_NAME_COMPLETE, CONFIG_BT_DEVICE_NAME, sizeof(CONFIG_BT_DEVICE_NAME) - 1),
 };
 
@@ -540,6 +548,7 @@ static const struct bt_data bt_ad[] = {
  */
 static const struct bt_data bt_sd[] = {
     BT_DATA_BYTES(BT_DATA_UUID16_ALL, BT_UUID_16_ENCODE(BT_UUID_DIS_VAL)),
+    BT_DATA(BT_DATA_UUID128_ALL, dfu_service_uuid.val, sizeof(dfu_service_uuid.val)),
 };
 
 /**
@@ -647,6 +656,52 @@ static ssize_t test_data_read_characteristic(struct bt_conn *conn, const struct 
     const char *value = "Test Data Read Value";
     LOG_INF("test_data_read_characteristic");
     return bt_gatt_attr_read(conn, attr, buf, len, offset, value, strlen(value));
+}
+
+/**
+ * @brief Handler for writes to the test data characteristic
+ * 
+ * Allows toggling between test mode and audio mode by writing to the test characteristic.
+ * Writing "test" enables test mode, writing "audio" enables audio mode.
+ * 
+ * @param conn The connection that triggered the write
+ * @param attr The attribute being written
+ * @param buf Buffer containing the data to write
+ * @param len Length of the data
+ * @param offset Offset to start writing at
+ * @param flags Write flags
+ * @return Number of bytes written
+ */
+static ssize_t test_data_write_handler(struct bt_conn *conn, const struct bt_gatt_attr *attr, const void *buf, uint16_t len, uint16_t offset, uint8_t flags)
+{
+    LOG_INF("test_data_write_handler received %d bytes", len);
+    
+    // Create a copy of the data to ensure null-termination
+    char data[32] = {0};
+    size_t data_len = MIN(len, sizeof(data) - 1);
+    memcpy(data, buf, data_len);
+    
+    LOG_INF("Received command: %s", data);
+    
+    // Process command
+    if (strncmp(data, "test", 4) == 0) {
+        LOG_INF("Enabling test mode");
+        set_test_mode(true);
+        
+        // Send confirmation
+        const char *response = "Test mode enabled";
+        bt_gatt_notify(conn, attr, response, strlen(response));
+    }
+    else if (strncmp(data, "audio", 5) == 0) {
+        LOG_INF("Enabling audio mode");
+        set_test_mode(false);
+        
+        // Send confirmation
+        const char *response = "Audio mode enabled";
+        bt_gatt_notify(conn, attr, response, strlen(response));
+    }
+    
+    return len;
 }
 
 /**
@@ -873,206 +928,8 @@ static uint16_t packet_next_index = 0;
 /** Temporary buffer for combining packet header and payload */
 static uint8_t pusher_temp_data[CODEC_OUTPUT_MAX_BYTES + NET_BUFFER_HEADER_SIZE];
 
-/**
- * @brief Send audio data packets to connected Bluetooth clients
- * 
- * Reads audio data from the ring buffer, fragments it into
- * appropriately-sized packets based on the current MTU,
- * and sends them via GATT notifications.
- * 
- * @param conn The connection to send data to
- * @return true if data was sent, false if no data available
- */
-static bool push_to_gatt(struct bt_conn *conn)
-{
-    // Read data from ring buffer
-    if (!read_from_tx_queue())
-    {
-        return false;
-    }
-
-    // Check if client is subscribed to notifications
-    bool is_subscribed = bt_gatt_is_subscribed(conn, &audio_service.attrs[1], BT_GATT_CCC_NOTIFY);
-    if (!is_subscribed) {
-        LOG_WRN("Client not subscribed to audio data notifications, dropping packet");
-        return false;
-    }
-
-    LOG_INF("Pushing data to GATT, total size: %d", tx_buffer_size);
-    
-    // For text data, we can print it out for debugging
-    if (tx_buffer_size < 100) { // Assuming it might be our text message
-        uint8_t *buffer = tx_buffer + RING_BUFFER_HEADER_SIZE;
-        char debug_buffer[100] = {0};
-        memcpy(debug_buffer, buffer, MIN(tx_buffer_size, 99));
-        LOG_INF("Text data: \"%s\"", debug_buffer);
-    }
-
-    // Push each frame
-    uint8_t *buffer = tx_buffer + RING_BUFFER_HEADER_SIZE;
-    uint32_t offset = 0;
-    uint8_t index = 0;
-    uint32_t packets_sent = 0;
-    
-    while (offset < tx_buffer_size)
-    {
-        // Recombine packet
-        uint32_t id = packet_next_index++;
-        uint32_t packet_size = MIN(current_mtu - NET_BUFFER_HEADER_SIZE, tx_buffer_size - offset);
-        pusher_temp_data[0] = id & 0xFF;
-        pusher_temp_data[1] = (id >> 8) & 0xFF;
-        pusher_temp_data[2] = index;
-        memcpy(pusher_temp_data + NET_BUFFER_HEADER_SIZE, buffer + offset, packet_size);
-        
-        LOG_DBG("Sending packet %d, size %d, index %d", id, packet_size, index);
-
-        offset += packet_size;
-        index++;
-
-        int retry_count = 0;
-        const int max_retries = 3;
-        
-        while (retry_count < max_retries)
-        {
-            // Try send notification
-            int err = bt_gatt_notify(conn, &audio_service.attrs[1], pusher_temp_data, packet_size + NET_BUFFER_HEADER_SIZE);
-
-            // Log failure
-            if (err)
-            {
-                LOG_ERR("bt_gatt_notify failed (err %d)", err);
-                LOG_INF("MTU: %d, packet_size: %d", current_mtu, packet_size + NET_BUFFER_HEADER_SIZE);
-                
-                if (err == -EAGAIN || err == -ENOMEM) {
-                    retry_count++;
-                    k_sleep(K_MSEC(5));
-                    continue;
-                } else {
-                    // For other errors, break out of the retry loop
-                    break;
-                }
-            }
-            else
-            {
-                packets_sent++;
-                LOG_DBG("Notification sent successfully");
-                break; // Success - exit retry loop
-            }
-        }
-    }
-
-    // Check if ring buffer is getting full and clear it if needed
-    uint32_t rb_size = ring_buf_size_get(&ring_buf);
-    uint32_t rb_capacity = sizeof(tx_queue);
-    
-    if (rb_size > (rb_capacity * 3/4)) {
-        LOG_WRN("Ring buffer getting full (%u/%u bytes, %u%%), clearing older entries", 
-                rb_size, rb_capacity, (rb_size * 100) / rb_capacity);
-        ring_buf_reset(&ring_buf);
-    }
-
-    LOG_INF("Finished sending all packets (%u sent)", packets_sent);
-    return packets_sent > 0;
-}
-
-/** Size of OPUS codec packet prefix in storage */
-#define OPUS_PREFIX_LENGTH 1
-
-/** Padded size of each OPUS packet in storage for alignment */
-#define OPUS_PADDED_LENGTH 80
-
-/** Maximum size for storage write operations */
-#define MAX_WRITE_SIZE 440
-
-/** Buffer for preparing data to write to storage */
-static uint8_t storage_temp_data[MAX_WRITE_SIZE];
-
-/** Current offset position in the file */
-static uint32_t offset = 0;
-
-/** Current offset in the buffer for data collection */
-static uint16_t buffer_offset = 0;
-
-/**
- * @brief Write audio data to SD card storage
- * 
- * Reads audio data from the ring buffer and writes it to the SD card
- * in efficiently packed blocks. Manages partial blocks by collecting
- * data until a complete block is ready to write.
- * 
- * @return true if data was written, false if no data available
- */
-bool write_to_storage(void) {//max possible packing
-    if (!read_from_tx_queue())
-    {
-        return false;
-    }
-
-    uint8_t *buffer = tx_buffer+2;
-    uint8_t packet_size = (uint8_t)(tx_buffer_size + OPUS_PREFIX_LENGTH);
-
-    // buffer_offset = buffer_offset+amount_to_fill;
-    //check if adding the new packet will cause a overflow
-    if(buffer_offset + packet_size > MAX_WRITE_SIZE-1) 
-    { 
-
-    storage_temp_data[buffer_offset] = tx_buffer_size;
-    uint8_t *write_ptr = storage_temp_data;
-    write_to_file(write_ptr,MAX_WRITE_SIZE);
-
-    buffer_offset = packet_size;
-    storage_temp_data[0] = tx_buffer_size;
-    memcpy(storage_temp_data + 1, buffer, tx_buffer_size);
-
-    }
-    else if (buffer_offset + packet_size == MAX_WRITE_SIZE-1) 
-    { //exact frame needed 
-    storage_temp_data[buffer_offset] = tx_buffer_size;
-    memcpy(storage_temp_data + buffer_offset + 1, buffer, tx_buffer_size);
-    buffer_offset = 0;
-    uint8_t *write_ptr = (uint8_t*)storage_temp_data;
-    write_to_file(write_ptr,MAX_WRITE_SIZE);
-    
-    }
-    else 
-    {
-    storage_temp_data[buffer_offset] = tx_buffer_size;
-    memcpy(storage_temp_data+ buffer_offset+1, buffer, tx_buffer_size);
-    buffer_offset = buffer_offset + packet_size;
-    }
-
-    return true;
-}
-
-/** Flag indicating whether to use storage when Bluetooth is not available */
-static bool use_storage = true;
-
-/** Maximum number of audio files to store */
-#define MAX_FILES 10
-
-/** Maximum size of each audio file in bytes */
-#define MAX_AUDIO_FILE_SIZE 300000
-
-/** Counter for detecting file size update intervals */
-static int recent_file_size_updated = 0;
-
 /** Counter for periodic heartbeat operations */
 static uint8_t heartbeat_count = 0;
-
-/**
- * @brief Update file size information
- * 
- * Reads the current file size and offset information from storage
- * and updates the global file_num_array with this information.
- * This is called periodically to keep track of storage usage.
- */
-void update_file_size() 
-{
-    file_num_array[0] = get_file_size(1);
-    file_num_array[1] = get_offset();
-    // LOG_PRINTK("file size for file count %d %d\n",file_count,file_num_array[0]);
-    // LOG_PRINTK("offset for file count %d %d\n",file_count,file_num_array[1]);
-}
 
 /**
  * @brief Main function for the pusher thread
@@ -1085,11 +942,15 @@ void update_file_size()
 void pusher(void)
 {
     k_msleep(500);
+    
+    // Counter for measuring packet processing rate
+    uint32_t packet_count = 0;
+    uint32_t last_time_ms = k_uptime_get_32();
+    uint32_t report_interval_ms = 5000; // Log stats every 5 seconds
+    
     while (1)
     {
-        //
         // Load current connection
-        //
         struct bt_conn *conn = current_connection;
         
         // If we have a connection
@@ -1120,17 +981,38 @@ void pusher(void)
             // If everything is valid, push to GATT
             if (valid)
             {
-                bool sent = push_to_gatt(conn);
-                if (!sent)
-                {
-                    k_sleep(K_MSEC(10)); // Short sleep if nothing was sent
+                // Process up to 5 packets without yielding to ensure low latency streaming
+                for (int i = 0; i < 5; i++) {
+                    bool sent = push_to_gatt(conn);
+                    if (sent) {
+                        packet_count++;
+                    } else {
+                        break; // No more data to send
+                    }
+                }
+                
+                // Check if it's time to log stats
+                uint32_t current_time_ms = k_uptime_get_32();
+                if (current_time_ms - last_time_ms >= report_interval_ms) {
+                    float time_diff_sec = (float)(current_time_ms - last_time_ms) / 1000.0f;
+                    float packets_per_sec = packet_count / time_diff_sec;
+                    
+                    // Log streaming statistics
+                    LOG_INF("Audio streaming stats: %d packets in %.1f seconds (%.1f packets/sec)",
+                            packet_count, time_diff_sec, packets_per_sec);
+                    
+                    // Reset counters
+                    packet_count = 0;
+                    last_time_ms = current_time_ms;
                 }
             }
             
             // Release the connection
             bt_conn_unref(conn);
+            
+            // Sleep for a short time to reduce CPU usage while still maintaining responsive audio
+            k_sleep(K_MSEC(5));
         }
-        
         // If we're not connected but storage is enabled
         else if (!storage_is_on) 
         {
@@ -1155,10 +1037,15 @@ void pusher(void)
                     LOG_PRINTK("drawing\n");
                 }
             }
-        }    
-        
-        // Yield to other tasks
-        k_yield();
+            
+            // Sleep longer when not connected
+            k_sleep(K_MSEC(20));
+        }
+        else
+        {
+            // Sleep longer when nothing to do
+            k_sleep(K_MSEC(20));
+        }
     }
 }
 
@@ -1217,6 +1104,15 @@ int bt_on()
 
    return 0;
 }
+
+/** Maximum size for storage write operations */
+#define MAX_WRITE_SIZE 440
+
+/** Buffer for preparing data to write to storage */
+static uint8_t storage_temp_data[MAX_WRITE_SIZE];
+
+/** Padded size of each OPUS packet in storage for alignment */
+#define OPUS_PADDED_LENGTH 80
 
 /**
  * @brief Initialize the Bluetooth transport system
@@ -1332,13 +1228,35 @@ struct bt_conn *get_current_connection()
  */
 int broadcast_audio_packets(uint8_t *buffer, size_t size)
 {
-    LOG_INF("Broadcasting packet: size=%d, data=\"%s\"", size, buffer);
+    // Only log the first few characters for binary data to reduce log spam
+    static uint32_t packet_counter = 0;
+    
+    // Only log every 20th packet to reduce console spam
+    if (packet_counter % 20 == 0) {
+        char preview[16] = {0};
+        int preview_len = size > 8 ? 8 : size; // Just show first few bytes
+        
+        // Create a safe preview string without assuming it's text
+        for (int i = 0; i < preview_len; i++) {
+            if (buffer[i] >= 32 && buffer[i] <= 126) {
+                preview[i] = buffer[i]; // Printable ASCII
+            } else {
+                preview[i] = '.'; // Non-printable
+            }
+        }
+        
+        LOG_INF("Broadcasting audio packet #%d: size=%d bytes, preview=\"%s...\"", 
+                packet_counter, size, preview);
+    }
+    packet_counter++;
     
     // Try to write to the queue with retries
     int max_retries = 3;
     for (int retry = 0; retry < max_retries; retry++) {
         if (write_to_tx_queue(buffer, size)) {
-            LOG_DBG("Successfully queued packet for transmission");
+            if (packet_counter % 20 == 0) {
+                LOG_DBG("Successfully queued packet for transmission");
+            }
             return 0; // Success
         }
         
@@ -1421,4 +1339,218 @@ int send_test_message(const char *message, size_t length)
         LOG_WRN("Client not subscribed to audio characteristic either");
         return -ENOTCONN;
     }
+}
+
+/**
+ * @brief Send audio data packets to connected Bluetooth clients
+ * 
+ * Reads audio data from the ring buffer, fragments it into
+ * appropriately-sized packets based on the current MTU,
+ * and sends them via GATT notifications.
+ * 
+ * @param conn The connection to send data to
+ * @return true if data was sent, false if no data available
+ */
+static bool push_to_gatt(struct bt_conn *conn)
+{
+    // Read data from ring buffer
+    if (!read_from_tx_queue())
+    {
+        return false;
+    }
+
+    // Check if client is subscribed to notifications
+    bool is_subscribed = bt_gatt_is_subscribed(conn, &audio_service.attrs[1], BT_GATT_CCC_NOTIFY);
+    if (!is_subscribed) {
+        LOG_WRN("Client not subscribed to audio data notifications, dropping packet");
+        return false;
+    }
+
+    // Only log details occasionally to avoid flooding
+    static uint32_t push_count = 0;
+    bool should_log = (push_count % 20 == 0);
+    
+    if (should_log) {
+        LOG_INF("Pushing data to GATT, total size: %d (packet #%d)", tx_buffer_size, push_count);
+    }
+    push_count++;
+    
+    // For text data, we can print it out for debugging
+    if (tx_buffer_size < 100 && should_log) { // Assuming it might be our text message
+        uint8_t *buffer = tx_buffer + RING_BUFFER_HEADER_SIZE;
+        char debug_buffer[32] = {0};
+        
+        // Create a safe preview string without assuming it's text
+        int preview_len = MIN(tx_buffer_size, 16);
+        for (int i = 0; i < preview_len; i++) {
+            if (buffer[i] >= 32 && buffer[i] <= 126) {
+                debug_buffer[i] = buffer[i]; // Printable ASCII
+            } else {
+                debug_buffer[i] = '.'; // Non-printable
+            }
+        }
+        
+        LOG_INF("Data preview: \"%s...\"", debug_buffer);
+    }
+
+    // Push each frame
+    uint8_t *buffer = tx_buffer + RING_BUFFER_HEADER_SIZE;
+    uint32_t offset = 0;
+    uint8_t index = 0;
+    uint32_t packets_sent = 0;
+    
+    while (offset < tx_buffer_size)
+    {
+        // Recombine packet
+        uint32_t id = packet_next_index++;
+        uint32_t packet_size = MIN(current_mtu - NET_BUFFER_HEADER_SIZE, tx_buffer_size - offset);
+        pusher_temp_data[0] = id & 0xFF;
+        pusher_temp_data[1] = (id >> 8) & 0xFF;
+        pusher_temp_data[2] = index;
+        memcpy(pusher_temp_data + NET_BUFFER_HEADER_SIZE, buffer + offset, packet_size);
+        
+        if (should_log) {
+            LOG_DBG("Sending packet %d, size %d, index %d", id, packet_size, index);
+        }
+
+        offset += packet_size;
+        index++;
+
+        int retry_count = 0;
+        const int max_retries = 3;
+        
+        while (retry_count < max_retries)
+        {
+            // Try send notification
+            int err = bt_gatt_notify(conn, &audio_service.attrs[1], pusher_temp_data, packet_size + NET_BUFFER_HEADER_SIZE);
+
+            // Log failure
+            if (err)
+            {
+                if (should_log) {
+                    LOG_ERR("bt_gatt_notify failed (err %d)", err);
+                    LOG_INF("MTU: %d, packet_size: %d", current_mtu, packet_size + NET_BUFFER_HEADER_SIZE);
+                }
+                
+                if (err == -EAGAIN || err == -ENOMEM) {
+                    retry_count++;
+                    k_sleep(K_MSEC(5));
+                    continue;
+                } else {
+                    // For other errors, break out of the retry loop
+                    break;
+                }
+            }
+            else
+            {
+                packets_sent++;
+                if (should_log) {
+                    LOG_DBG("Notification sent successfully");
+                }
+                break; // Success - exit retry loop
+            }
+        }
+    }
+
+    // Check if ring buffer is getting full and clear it if needed
+    uint32_t rb_size = ring_buf_size_get(&ring_buf);
+    uint32_t rb_capacity = sizeof(tx_queue);
+    
+    if (rb_size > (rb_capacity * 3/4)) {
+        LOG_WRN("Ring buffer getting full (%u/%u bytes, %u%%), clearing older entries", 
+                rb_size, rb_capacity, (rb_size * 100) / rb_capacity);
+        ring_buf_reset(&ring_buf);
+    }
+
+    if (should_log) {
+        LOG_INF("Finished sending all packets (%u sent)", packets_sent);
+    }
+    return packets_sent > 0;
+}
+
+/** Size of OPUS codec packet prefix in storage */
+#define OPUS_PREFIX_LENGTH 1
+
+/** Current offset position in the file */
+static uint32_t offset = 0;
+
+/** Current offset in the buffer for data collection */
+static uint16_t buffer_offset = 0;
+
+/**
+ * @brief Write audio data to SD card storage
+ * 
+ * Reads audio data from the ring buffer and writes it to the SD card
+ * in efficiently packed blocks. Manages partial blocks by collecting
+ * data until a complete block is ready to write.
+ * 
+ * @return true if data was written, false if no data available
+ */
+bool write_to_storage(void) {//max possible packing
+    if (!read_from_tx_queue())
+    {
+        return false;
+    }
+
+    uint8_t *buffer = tx_buffer+2;
+    uint8_t packet_size = (uint8_t)(tx_buffer_size + OPUS_PREFIX_LENGTH);
+
+    // buffer_offset = buffer_offset+amount_to_fill;
+    //check if adding the new packet will cause a overflow
+    if(buffer_offset + packet_size > MAX_WRITE_SIZE-1) 
+    { 
+
+    storage_temp_data[buffer_offset] = tx_buffer_size;
+    uint8_t *write_ptr = storage_temp_data;
+    write_to_file(write_ptr,MAX_WRITE_SIZE);
+
+    buffer_offset = packet_size;
+    storage_temp_data[0] = tx_buffer_size;
+    memcpy(storage_temp_data + 1, buffer, tx_buffer_size);
+
+    }
+    else if (buffer_offset + packet_size == MAX_WRITE_SIZE-1) 
+    { //exact frame needed 
+    storage_temp_data[buffer_offset] = tx_buffer_size;
+    memcpy(storage_temp_data + buffer_offset + 1, buffer, tx_buffer_size);
+    buffer_offset = 0;
+    uint8_t *write_ptr = (uint8_t*)storage_temp_data;
+    write_to_file(write_ptr,MAX_WRITE_SIZE);
+    
+    }
+    else 
+    {
+    storage_temp_data[buffer_offset] = tx_buffer_size;
+    memcpy(storage_temp_data+ buffer_offset+1, buffer, tx_buffer_size);
+    buffer_offset = buffer_offset + packet_size;
+    }
+
+    return true;
+}
+
+/** Flag indicating whether to use storage when Bluetooth is not available */
+static bool use_storage = true;
+
+/** Maximum number of audio files to store */
+#define MAX_FILES 10
+
+/** Maximum size of each audio file in bytes */
+#define MAX_AUDIO_FILE_SIZE 300000
+
+/** Counter for detecting file size update intervals */
+static int recent_file_size_updated = 0;
+
+/**
+ * @brief Update file size information
+ * 
+ * Reads the current file size and offset information from storage
+ * and updates the global file_num_array with this information.
+ * This is called periodically to keep track of storage usage.
+ */
+void update_file_size() 
+{
+    file_num_array[0] = get_file_size(1);
+    file_num_array[1] = get_offset();
+    // LOG_PRINTK("file size for file count %d %d\n",file_count,file_num_array[0]);
+    // LOG_PRINTK("offset for file count %d %d\n",file_count,file_num_array[1]);
 }

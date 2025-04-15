@@ -55,7 +55,6 @@ LOG_MODULE_REGISTER(main, CONFIG_LOG_DEFAULT_LEVEL);
  * @param data Pointer to encoded audio data
  * @param len Length of the encoded data in bytes
  */
-/* 
 static void codec_handler(uint8_t *data, size_t len)
 {
     // LOG_INF("Codec handler called"); // Reduce log noise
@@ -70,7 +69,6 @@ static void codec_handler(uint8_t *data, size_t len)
         }
     }
 }
-*/
 
 /**
  * @brief Callback function for handling microphone PCM data
@@ -80,7 +78,6 @@ static void codec_handler(uint8_t *data, size_t len)
  * 
  * @param buffer Pointer to buffer containing PCM audio samples
  */
-/*
 static void mic_handler(int16_t *buffer)
 {
     // LOG_INF("Mic handler called"); // Keep this maybe? Or remove if too noisy
@@ -101,7 +98,6 @@ static void mic_handler(int16_t *buffer)
     // }
     // printk("--- Mic Buffer End ---\n");
 }
-*/
 
 /**
  * @brief Handler for Bluetooth controller assertions
@@ -216,6 +212,9 @@ void set_led_state()
 #define TEST_MESSAGE "Hello from Omi!"
 #define TEST_MESSAGE_INTERVAL_MS 1000
 
+// Flag to indicate if we should send test messages or use real audio
+bool use_test_messages = false;
+
 //Main loop thread
 void main_loop_thread(void)
 {
@@ -231,8 +230,8 @@ void main_loop_thread(void)
         // Update LED state
         set_led_state();
         
-        // Only send data if connected to Bluetooth
-        if (is_connected) {
+        // Only send test data if connected to Bluetooth AND test mode is active
+        if (is_connected && use_test_messages) {
             // Format a test message with a counter
             snprintf(test_buffer, sizeof(test_buffer), "%s %u", TEST_MESSAGE, count++);
             LOG_INF("Sending test data: %s", test_buffer);
@@ -243,7 +242,7 @@ void main_loop_thread(void)
             if (err) {
                 LOG_ERR("Failed to send test message: %d", err);
             }
-        } else {
+        } else if (!is_connected) {
             // Only show waiting message if transport is actually working
             if (!transport_error_shown) {
                 LOG_INF("Waiting for Bluetooth connection...");
@@ -420,8 +419,6 @@ int main(void)
         LOG_INF("Transport started successfully");
     }
 
-    /* COMMENT OUT MIC AND CODEC INITIALIZATION */
-    /*
     // Initialize audio codec (Opus)
     LOG_PRINTK("\n");
     LOG_INF("Initializing codec...\n");
@@ -473,7 +470,10 @@ int main(void)
         set_led_green(false);
         return err;
     }
-    */
+
+    // Explicitly set to audio mode (not test mode)
+    set_test_mode(false);
+    LOG_INF("Starting in audio mode - mic and codec active");
 
     // Turn off initialization indicator LEDs
     set_led_red(false);
@@ -490,4 +490,27 @@ int main(void)
     LOG_INF("Entering main loop...");
 
     return 0;
+}
+
+/**
+ * @brief Toggle between test mode and audio mode
+ * 
+ * This function can be called to switch between sending test messages
+ * and processing real audio data from the microphone.
+ * 
+ * @param enable_test_mode true to enable test messages, false to use real audio
+ */
+void set_test_mode(bool enable_test_mode)
+{
+    use_test_messages = enable_test_mode;
+    
+    if (enable_test_mode) {
+        LOG_INF("Test mode enabled - sending test messages");
+        // Optionally pause microphone to save power
+        mic_off();
+    } else {
+        LOG_INF("Test mode disabled - using real audio");
+        // Resume microphone
+        mic_on();
+    }
 }
