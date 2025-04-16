@@ -42,12 +42,11 @@ static struct pcm_stream_cfg stream_cfg = {
 
 static struct dmic_cfg drv_cfg = {
     .io = {
-        // Configure according to nRF5340 and T5838 specs if needed,
-        // or use defaults. Using sample defaults for now.
-        .min_pdm_clk_freq = 1000000,
-        .max_pdm_clk_freq = 3500000,
-        .min_pdm_clk_dc = 40,
-        .max_pdm_clk_dc = 60,
+        // Optimized PDM clock settings for better audio quality
+        .min_pdm_clk_freq = 1024000,  // Increased from 1000000
+        .max_pdm_clk_freq = 4000000,  // Increased from 3500000 for better sampling
+        .min_pdm_clk_dc = 48,         // Adjusted from 40 for cleaner signal
+        .max_pdm_clk_dc = 52,         // Narrowed range from 60 to produce more consistent sampling
     },
     .streams = &stream_cfg,
     .channel = {
@@ -197,6 +196,15 @@ int mic_init(void)
 
     // Set channel map dynamically
     drv_cfg.channel.req_chan_map_lo = dmic_build_channel_map(0, 0, PDM_CHAN_LEFT);
+    
+    // Apply additional DMIC configurations for better audio quality
+    // struct dmic_gain_cmd gain_cfg;
+    // gain_cfg.gain = MIC_GAIN;  // Use the increased gain from config.h
+    // ret = dmic_configure_gain(dmic_dev, 0, gain_cfg);
+    // if (ret < 0) {
+    //     LOG_WRN("Failed to set DMIC gain (%d), continuing anyway", ret);
+    //     // Don't return error, we can still try to use the mic
+    // }
 
     // Configure GPIOs initially (set to off state)
     ret = mic_power_off(); // Use the refactored power off function
@@ -206,7 +214,7 @@ int mic_init(void)
         return ret;
     }
 
-    LOG_INF("Microphone initialized");
+    LOG_INF("Microphone initialized with enhanced audio quality settings");
     return 0;
 }
 
@@ -255,7 +263,7 @@ void mic_on()
 	ret = gpio_pin_set_dt(&mic_en, 1);
     if (ret < 0) LOG_ERR("Failed set en (%d)", ret);
 
-    // Small delay for power stabilization (optional, adjust if needed)
-    k_sleep(K_MSEC(5));
+    // Increased delay for power stabilization (from 5ms to 20ms)
+    k_sleep(K_MSEC(20));
     LOG_INF("Mic powered on");
 }

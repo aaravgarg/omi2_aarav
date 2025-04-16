@@ -28,11 +28,16 @@ uint8_t codec_ring_buffer_data[AUDIO_BUFFER_SAMPLES * 2]; // 2 bytes per sample
 struct ring_buf codec_ring_buf;
 int codec_receive_pcm(int16_t *data, size_t len) //this gets called after mic data is finished 
 {   
-    // LOG_INF("Codec receive PCM called"); // Reduce log noise
-    // LOG_INF("Codec ring buffer size: %d", ring_buf_size_get(&codec_ring_buf)); // Reduce log noise
-    // LOG_INF("Codec ring buffer data: %p", codec_ring_buffer_data); // Reduce log noise
-    // LOG_INF("Codec ring buffer data size: %d", sizeof(codec_ring_buffer_data)); // Reduce log noise
-    // LOG_INF("Codec ring buffer data length: %d", len); // Reduce log noise
+    // Normalize audio data before encoding
+    // Apply a simple gain adjustment to ensure input level is adequate
+    int16_t *normalized_data = data;
+    for (size_t i = 0; i < len; i++) {
+        // Ensure we don't overflow
+        int32_t sample = (int32_t)data[i] * 1.5; // Apply 1.5x gain
+        if (sample > 32767) sample = 32767;
+        else if (sample < -32768) sample = -32768;
+        normalized_data[i] = (int16_t)sample;
+    }
 
     size_t bytes_to_write = len * sizeof(int16_t); // Calculate bytes needed
     size_t available_space = ring_buf_space_get(&codec_ring_buf);
@@ -44,7 +49,7 @@ int codec_receive_pcm(int16_t *data, size_t len) //this gets called after mic da
         return -ENOMEM; // Indicate memory issue (buffer full)
     }
    
-    int written = ring_buf_put(&codec_ring_buf, (uint8_t *)data, bytes_to_write);
+    int written = ring_buf_put(&codec_ring_buf, (uint8_t *)normalized_data, bytes_to_write);
     if (written != bytes_to_write)
     {
         // This case should technically not happen now due to the space check,
@@ -124,8 +129,15 @@ int codec_start()
     ASSERT_TRUE(opus_encoder_ctl(m_opus_state, OPUS_SET_SIGNAL(OPUS_SIGNAL_VOICE)) == OPUS_OK);
     ASSERT_TRUE(opus_encoder_ctl(m_opus_state, OPUS_SET_LSB_DEPTH(16)) == OPUS_OK);
     ASSERT_TRUE(opus_encoder_ctl(m_opus_state, OPUS_SET_DTX(0)) == OPUS_OK);
-    ASSERT_TRUE(opus_encoder_ctl(m_opus_state, OPUS_SET_INBAND_FEC(0)) == OPUS_OK);
-    ASSERT_TRUE(opus_encoder_ctl(m_opus_state, OPUS_SET_PACKET_LOSS_PERC(0)) == OPUS_OK);
+    
+    // Enable Forward Error Correction for better audio quality
+    ASSERT_TRUE(opus_encoder_ctl(m_opus_state, OPUS_SET_INBAND_FEC(1)) == OPUS_OK);
+    
+    // Set packet loss percentage to 10% to make codec more resilient to packet loss
+    ASSERT_TRUE(opus_encoder_ctl(m_opus_state, OPUS_SET_PACKET_LOSS_PERC(10)) == OPUS_OK);
+    
+    // Set bandwidth to wideband (8kHz) to balance quality and data rate
+    ASSERT_TRUE(opus_encoder_ctl(m_opus_state, OPUS_SET_BANDWIDTH(OPUS_BANDWIDTH_WIDEBAND)) == OPUS_OK);
 #endif
 
     // Thread
